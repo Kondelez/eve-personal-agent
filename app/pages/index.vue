@@ -41,7 +41,29 @@ onMounted(() => void openChat());
 <template>
   <UDashboardPanel id="chat" class="min-h-0" :ui="{ body: 'p-0 sm:p-0 overflow-hidden gap-0' }">
     <template #header>
-      <AppNavbar />
+      <AppNavbar>
+        <template #title>
+          <div class="flex items-center gap-3">
+            <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-800 text-white dark:bg-teal-300 dark:text-teal-950">
+              <AppLogo class="h-3.5 w-auto" />
+            </span>
+            <div class="min-w-0">
+              <p class="text-sm font-semibold leading-tight text-highlighted">Eve</p>
+              <p class="text-xs leading-tight text-muted">Web and SMS in one chat</p>
+            </div>
+          </div>
+        </template>
+
+        <UButton
+          to="/settings/profile"
+          variant="ghost"
+          color="neutral"
+          icon="i-lucide-smartphone"
+          aria-label="SMS settings"
+          title="SMS settings"
+          class="rounded-lg"
+        />
+      </AppNavbar>
     </template>
 
     <template #body>
