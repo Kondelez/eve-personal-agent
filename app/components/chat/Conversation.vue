@@ -605,13 +605,17 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
             </UDropdownMenu>
             <span v-if="preparingFiles" role="status" class="text-xs text-muted">Preparing attachments…</span>
 
-            <ChatDictation
-              v-if="dictating || (!hasDraft && !isBusy && status !== 'error')"
-              v-model:active="dictating"
-              :disabled="preparingFiles || submitting || !!regenerating"
+            <div
+              v-show="dictating || (!hasDraft && !isBusy && status !== 'error')"
               class="ms-auto"
-              @transcript="insertTranscript"
-            />
+              :class="{ 'min-w-0 flex-1': dictating }"
+            >
+              <ChatDictation
+                v-model:active="dictating"
+                :disabled="preparingFiles || submitting || !!regenerating"
+                @transcript="insertTranscript"
+              />
+            </div>
 
             <UChatPromptSubmit
               v-if="!dictating && (isBusy || (status === 'error' && !hasDraft))"

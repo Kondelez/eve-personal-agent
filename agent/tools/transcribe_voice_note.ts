@@ -5,6 +5,7 @@ import { defineTool } from "eve/tools";
 import type { ToolContext } from "eve/tools";
 import { z } from "zod";
 import { getChatMedia } from "../../server/utils/chat-media";
+import { transcribeAudio } from "../../server/utils/audio-transcription";
 import { CONNECT_USER_ISSUER } from "../../shared/connect";
 import { CHAT_MEDIA_ID } from "../../shared/chat-media";
 
@@ -47,25 +48,6 @@ async function normalizeAudio(bytes: Buffer, extension: string, ctx: ToolContext
   }
 }
 
-async function transcriptFromOpenAI(bytes: Buffer, filename: string, signal: AbortSignal) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("Voice transcription is unavailable.");
-
-  const body = new FormData();
-  body.set("model", "gpt-transcribe");
-  body.set("file", new Blob([new Uint8Array(bytes)]), filename);
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { authorization: `Bearer ${apiKey}` },
-    body,
-    signal,
-  });
-  if (!response.ok) throw new Error("The transcription service could not read the recording.");
-
-  const result = await response.json() as { text?: string };
-  return result.text?.trim() ?? "";
-}
-
 export default defineTool({
   description: "Transcribe a voice note attached to the current SMS/MMS message. Pass the ID from its voice-note-<id> filename.",
   inputSchema: z.object({ id: z.string().regex(CHAT_MEDIA_ID) }),
@@ -84,7 +66,8 @@ export default defineTool({
 
     const normalize = !OPENAI_FORMATS.has(extension);
     const audio = normalize ? await normalizeAudio(file.bytes, extension, ctx) : file.bytes;
-    const transcript = await transcriptFromOpenAI(audio, `voice-note.${normalize ? "wav" : extension}`, ctx.abortSignal);
+    const clip = new Blob([new Uint8Array(audio)]);
+    const transcript = await transcribeAudio(clip, `voice-note.${normalize ? "wav" : extension}`, ctx.abortSignal);
     if (normalize) {
       await db.update(schema.chatMedia).set({ bytes: audio, mediaType: "audio/wav", filename: `voice-note-${id}.wav` })
         .where(and(eq(schema.chatMedia.userId, caller.principalId), eq(schema.chatMedia.id, id)));
