@@ -18,4 +18,6 @@ export interface UserProfileWithUser extends UserProfile {
   name: string;
   email: string;
   phoneNumber?: string;
+  phoneVerified: boolean;
+  smsEnabled: boolean;
 }

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, ne } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
 import type { PhoneLinkRecord } from "#shared/types/phone-link";
 
@@ -26,6 +26,8 @@ function rowToRecord(row: typeof schema.phoneLinks.$inferSelect): PhoneLinkRecor
     appUserId: row.appUserId,
     phoneNumber: row.phoneNumber,
     linkedAt: row.linkedAt,
+    verifiedAt: row.verifiedAt,
+    smsConsentAt: row.smsConsentAt,
   };
 }
 
@@ -49,18 +51,46 @@ export async function getPhoneLinkByPhoneNumber(phoneNumber: string) {
   return row ? rowToRecord(row) : undefined;
 }
 
-export async function upsertPhoneLinkForAppUser(appUserId: string, phoneNumber: string) {
+export async function getSmsLinkByPhoneNumber(phoneNumber: string) {
   const normalized = normalizePhoneNumber(phoneNumber);
+  const [record] = await db.select({ link: schema.phoneLinks })
+    .from(schema.phoneLinks)
+    .innerJoin(schema.user, eq(schema.user.id, schema.phoneLinks.appUserId))
+    .where(and(
+      eq(schema.phoneLinks.phoneNumber, normalized),
+      isNotNull(schema.phoneLinks.verifiedAt),
+      isNotNull(schema.phoneLinks.smsConsentAt),
+    ))
+    .limit(1);
 
-  await db.delete(schema.phoneLinks)
-    .where(eq(schema.phoneLinks.appUserId, appUserId));
+  return record ? rowToRecord(record.link) : undefined;
+}
 
-  await db.insert(schema.phoneLinks).values({
-    appUserId,
+export async function upsertPhoneLinkForAppUser(
+  appUserId: string,
+  phoneNumber: string,
+  verification?: { date: string; smsConsent: boolean },
+  writer: Pick<typeof db, "insert"> = db,
+) {
+  const normalized = normalizePhoneNumber(phoneNumber);
+  const timestamps = {
     phoneNumber: normalized,
+    linkedAt: new Date().toISOString(),
+    verifiedAt: verification?.date ?? null,
+    smsConsentAt: verification?.smsConsent ? verification.date : null,
+  };
+  await writer.insert(schema.phoneLinks).values({ appUserId, ...timestamps }).onConflictDoUpdate({
+    target: schema.phoneLinks.appUserId,
+    set: timestamps,
+    // Routine profile saves include the unchanged number. Keep its verification.
+    setWhere: verification ? undefined : ne(schema.phoneLinks.phoneNumber, normalized),
   });
+}
 
-  return (await getPhoneLinkForAppUser(appUserId))!;
+export async function disableSmsForAppUser(appUserId: string) {
+  await db.update(schema.phoneLinks)
+    .set({ smsConsentAt: null })
+    .where(eq(schema.phoneLinks.appUserId, appUserId));
 }
 
 export async function deletePhoneLinkForAppUser(appUserId: string) {

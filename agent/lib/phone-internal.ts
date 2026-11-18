@@ -1,10 +1,12 @@
 import type { PhoneLinkRecord } from "../../shared/types/phone-link.js";
 import { appOrigin, internalHeaders } from "./internal-api.js";
 
-export async function fetchPhoneLink(phoneNumber: string): Promise<PhoneLinkRecord | undefined> {
+export async function fetchPhoneLink(phoneNumber: string, channel?: "sms"): Promise<PhoneLinkRecord | undefined> {
   try {
+    const query = new URLSearchParams({ phoneNumber });
+    if (channel) query.set("channel", channel);
     const response = await fetch(
-      `${appOrigin()}/api/internal/phone/link?phoneNumber=${encodeURIComponent(phoneNumber)}`,
+      `${appOrigin()}/api/internal/phone/link?${query}`,
       { headers: internalHeaders() },
     );
 

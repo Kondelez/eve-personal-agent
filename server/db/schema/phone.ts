@@ -6,6 +6,8 @@ export const phoneLinks = pgTable("phone_links", {
   linkedAt: timestamp("linked_at", { withTimezone: true, mode: "string" })
     .notNull()
     .defaultNow(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true, mode: "string" }),
+  smsConsentAt: timestamp("sms_consent_at", { withTimezone: true, mode: "string" }),
 }, (table) => [
   primaryKey({ columns: [table.phoneNumber] }),
   uniqueIndex("phone_links_app_user_idx").on(table.appUserId),

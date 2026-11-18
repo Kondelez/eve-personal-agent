@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { authClient } from "~/lib/auth-client";
 
-const { profile, pending, saveProfile, timezones, locales } = useProfile();
+const { profile, pending, refresh, saveProfile, timezones, locales } = useProfile();
 
 const form = reactive({
   name: "",
@@ -13,6 +13,13 @@ const form = reactive({
 
 const saving = ref(false);
 const toast = useToast();
+const smsConsent = ref(false);
+const smsCode = ref("");
+const codeSentTo = ref("");
+const phoneActionPending = ref(false);
+const phoneError = ref("");
+const isCurrentPhone = computed(() => form.phoneNumber === profile.value?.phoneNumber);
+const canSendCode = computed(() => /^\+[1-9]\d{7,14}$/.test(form.phoneNumber));
 
 const isDirty = computed(() => {
   if (!profile.value) return false;
@@ -32,8 +39,50 @@ watch(profile, (value) => {
   form.bio = value.bio;
 }, { immediate: true });
 
+watch(() => form.phoneNumber, () => {
+  codeSentTo.value = "";
+  smsCode.value = "";
+  smsConsent.value = false;
+  phoneError.value = "";
+});
+
+async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms") {
+  if (phoneActionPending.value) return;
+
+  phoneActionPending.value = true;
+  phoneError.value = "";
+  const phoneNumber = form.phoneNumber;
+  try {
+    await $fetch(`/api/profile/phone/${action}`, {
+      method: "POST",
+      body: action === "send-code" ? { phoneNumber, smsConsent: smsConsent.value }
+        : action === "verify" ? { code: smsCode.value }
+        : {},
+    });
+    if (action === "send-code") {
+      codeSentTo.value = phoneNumber;
+      smsCode.value = "";
+    }
+    else {
+      const unsaved = { name: form.name, timezone: form.timezone, locale: form.locale, bio: form.bio };
+      await refresh();
+      Object.assign(form, unsaved);
+      codeSentTo.value = "";
+      smsCode.value = "";
+      smsConsent.value = false;
+    }
+  }
+  catch (error) {
+    phoneError.value = (error as { data?: { statusMessage?: string } }).data?.statusMessage
+      ?? "Could not complete that phone request. Please try again.";
+  }
+  finally {
+    phoneActionPending.value = false;
+  }
+}
+
 async function handleSave() {
-  if (saving.value || !isDirty.value) return;
+  if (saving.value || phoneActionPending.value || !isDirty.value) return;
 
   saving.value = true;
   try {
@@ -128,12 +177,48 @@ function resetForm() {
 
             <SettingsRow
               label="Phone"
-              description="Your E.164 number, so V recognises you when you text it."
+              description="Verify your mobile number to connect SMS to this account."
             >
-              <ProfilePhoneInput
-                v-model="form.phoneNumber"
-                :default-country="form.locale === 'fr' ? 'FR' : 'US'"
-              />
+              <div class="space-y-3">
+                <ProfilePhoneInput
+                  v-model="form.phoneNumber"
+                  :default-country="form.locale === 'fr' ? 'FR' : 'US'"
+                />
+                <template v-if="isCurrentPhone && profile?.smsEnabled">
+                  <p class="text-sm text-muted">Phone verified · SMS consent saved</p>
+                  <UButton type="button" variant="outline" color="neutral" :loading="phoneActionPending" @click="submitPhoneAction('disable-sms')">
+                    Turn off SMS replies
+                  </UButton>
+                </template>
+                <template v-else-if="canSendCode">
+                  <p v-if="isCurrentPhone && profile?.phoneVerified" class="text-sm text-muted">Phone verified</p>
+                  <template v-if="codeSentTo !== form.phoneNumber">
+                    <UCheckbox
+                      v-model="smsConsent"
+                      label="I agree to receive AI-generated SMS replies from Kondelez Eve."
+                      description="Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help."
+                    />
+                    <p class="text-xs text-muted">
+                      <NuxtLink to="/sms#privacy" class="underline">Privacy policy</NuxtLink>
+                      <span aria-hidden="true"> · </span>
+                      <NuxtLink to="/sms#terms" class="underline">SMS terms</NuxtLink>
+                    </p>
+                    <UButton type="button" variant="outline" color="neutral" :loading="phoneActionPending" @click="submitPhoneAction('send-code')">
+                      Send verification text
+                    </UButton>
+                  </template>
+                  <div v-else class="flex flex-wrap items-center gap-2">
+                    <UInput v-model="smsCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="Six-digit verification code" placeholder="6-digit code" />
+                    <UButton type="button" :disabled="!/^[0-9]{6}$/.test(smsCode)" :loading="phoneActionPending" @click="submitPhoneAction('verify')">
+                      Verify number
+                    </UButton>
+                    <UButton type="button" variant="ghost" color="neutral" :disabled="phoneActionPending" @click="submitPhoneAction('send-code')">
+                      Resend code
+                    </UButton>
+                  </div>
+                </template>
+                <p v-if="phoneError" role="alert" class="text-sm text-error">{{ phoneError }}</p>
+              </div>
             </SettingsRow>
 
             <SettingsRow

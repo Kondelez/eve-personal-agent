@@ -70,6 +70,8 @@ export async function getProfileWithUser(userId: string): Promise<UserProfileWit
     name: row.user.name,
     email: row.user.email,
     phoneNumber: phoneLink?.phoneNumber,
+    phoneVerified: Boolean(phoneLink?.verifiedAt),
+    smsEnabled: Boolean(phoneLink?.verifiedAt && phoneLink.smsConsentAt),
   };
 }
 
