@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { authClient } from "~/lib/auth-client";
 import { isVerificationPhoneNumber } from "#shared/phone-codes";
+import type { UserProfilePatch } from "#shared/types/profile";
 
 const { profile, pending, refresh, saveProfile, timezones, locales } = useProfile();
 
@@ -13,7 +14,12 @@ const form = reactive({
 });
 
 const saving = ref(false);
-const toast = useToast();
+const saved = ref(false);
+const saveFailed = ref(false);
+const committedPhoneNumber = ref("");
+let loadedUserId: string | undefined;
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let inFlightSave: Promise<void> | undefined;
 const smsConsent = ref(false);
 const smsCode = ref("");
 const codeSentTo = ref("");
@@ -22,23 +28,80 @@ const phoneError = ref("");
 const isCurrentPhone = computed(() => form.phoneNumber === profile.value?.phoneNumber);
 const canSendCode = computed(() => isVerificationPhoneNumber(form.phoneNumber));
 
-const isDirty = computed(() => {
-  if (!profile.value) return false;
-  return form.name !== profile.value.name
-    || form.phoneNumber !== (profile.value.phoneNumber ?? "")
-    || form.timezone !== profile.value.timezone
-    || form.locale !== profile.value.locale
-    || form.bio !== profile.value.bio;
+const pendingEdits = computed<UserProfilePatch>(() => {
+  const current = profile.value;
+  if (!current || current.userId !== loadedUserId) return {};
+
+  const patch: UserProfilePatch = {};
+  const name = form.name.trim();
+  const bio = form.bio.trim();
+  if (name && name !== current.name) patch.name = name;
+  if (bio !== current.bio) patch.bio = bio;
+  if (form.timezone !== current.timezone) patch.timezone = form.timezone;
+  if (form.locale !== current.locale) patch.locale = form.locale;
+  if (committedPhoneNumber.value === form.phoneNumber && form.phoneNumber !== (current.phoneNumber ?? "")) {
+    patch.phoneNumber = form.phoneNumber || null;
+  }
+  return patch;
 });
 
 watch(profile, (value) => {
-  if (!value) return;
+  if (!value || value.userId === loadedUserId) return;
+  loadedUserId = value.userId;
   form.name = value.name;
   form.phoneNumber = value.phoneNumber ?? "";
+  committedPhoneNumber.value = form.phoneNumber;
   form.timezone = value.timezone;
   form.locale = value.locale;
   form.bio = value.bio;
 }, { immediate: true });
+
+function commitPhoneNumber(value: string) {
+  if (!value || isVerificationPhoneNumber(value)) committedPhoneNumber.value = value;
+}
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  if (inFlightSave || phoneActionPending.value || !Object.keys(pendingEdits.value).length) return;
+  saveTimer = setTimeout(saveChanges, 450);
+}
+
+watch([() => form.name, () => form.bio, () => form.timezone, () => form.locale, committedPhoneNumber], () => {
+  saveFailed.value = false;
+  scheduleSave();
+});
+
+async function persistEdits(patch: UserProfilePatch) {
+  saving.value = true;
+  saveFailed.value = false;
+  try {
+    await saveProfile(patch);
+    saved.value = true;
+    if (patch.name) await authClient.getSession({ query: { disableCookieCache: true } }).catch(() => undefined);
+  }
+  catch {
+    saveFailed.value = true;
+  }
+  finally {
+    saving.value = false;
+    inFlightSave = undefined;
+    if (!saveFailed.value) scheduleSave();
+  }
+}
+
+function saveChanges() {
+  clearTimeout(saveTimer);
+  if (inFlightSave) return inFlightSave;
+  const patch = pendingEdits.value;
+  if (!phoneActionPending.value && Object.keys(patch).length) inFlightSave = persistEdits(patch);
+  return inFlightSave;
+}
+
+onBeforeRouteLeave(async () => {
+  await inFlightSave;
+  await saveChanges();
+});
+onBeforeUnmount(() => clearTimeout(saveTimer));
 
 watch(() => form.phoneNumber, () => {
   codeSentTo.value = "";
@@ -54,6 +117,7 @@ async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms")
   phoneError.value = "";
   const phoneNumber = form.phoneNumber;
   try {
+    await inFlightSave;
     await $fetch(`/api/profile/phone/${action}`, {
       method: "POST",
       body: action === "send-code" ? { phoneNumber, smsConsent: smsConsent.value }
@@ -65,9 +129,7 @@ async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms")
       smsCode.value = "";
     }
     else {
-      const unsaved = { name: form.name, timezone: form.timezone, locale: form.locale, bio: form.bio };
       await refresh();
-      Object.assign(form, unsaved);
       codeSentTo.value = "";
       smsCode.value = "";
       smsConsent.value = false;
@@ -79,43 +141,8 @@ async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms")
   }
   finally {
     phoneActionPending.value = false;
+    scheduleSave();
   }
-}
-
-async function handleSave() {
-  if (saving.value || phoneActionPending.value || !isDirty.value) return;
-  if (form.phoneNumber && !isCurrentPhone.value && !canSendCode.value) {
-    phoneError.value = "Enter a complete mobile number.";
-    return;
-  }
-
-  saving.value = true;
-  try {
-    await saveProfile({
-      name: form.name.trim(),
-      phoneNumber: form.phoneNumber.trim() || null,
-      timezone: form.timezone,
-      locale: form.locale,
-      bio: form.bio,
-    });
-    await authClient.getSession({ query: { disableCookieCache: true } });
-    toast.add({ title: "Profile saved", color: "success" });
-  }
-  catch {
-    toast.add({ title: "Could not save profile", color: "error" });
-  }
-  finally {
-    saving.value = false;
-  }
-}
-
-function resetForm() {
-  if (!profile.value) return;
-  form.name = profile.value.name;
-  form.phoneNumber = profile.value.phoneNumber ?? "";
-  form.timezone = profile.value.timezone;
-  form.locale = profile.value.locale;
-  form.bio = profile.value.bio;
 }
 </script>
 
@@ -131,30 +158,37 @@ function resetForm() {
 
     <template #body>
       <div class="mx-auto w-full max-w-2xl px-6 py-8">
-        <header class="mb-8">
-          <h1 class="mb-1 text-lg font-medium text-highlighted">
-            Settings
-          </h1>
-          <p class="max-w-lg text-sm text-muted">
-            Manage your identity and integrations.
+        <header class="mb-8 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 class="mb-1 text-lg font-medium text-highlighted">
+              Settings
+            </h1>
+            <p class="max-w-lg text-sm text-muted">
+              Manage your identity and integrations.
+            </p>
+          </div>
+          <div v-if="saveFailed" class="flex items-center gap-2 text-sm">
+            <p role="alert" class="text-error">Could not save your changes.</p>
+            <UButton type="button" color="neutral" variant="link" size="sm" @click="saveChanges">Retry</UButton>
+          </div>
+          <p v-else role="status" class="text-sm text-muted">
+            {{ saving || Object.keys(pendingEdits).length ? 'Saving…' : saved ? 'Changes saved' : '' }}
           </p>
         </header>
 
         <SettingsNav class="mb-8" />
 
         <div
-          v-if="pending"
+          v-if="pending && !profile"
           class="space-y-8"
         >
           <USkeleton class="h-48 rounded-lg" />
           <USkeleton class="h-32 rounded-lg" />
         </div>
 
-        <form
-          v-else
-          id="profile-form"
+        <div
+          v-else-if="profile"
           class="space-y-8"
-          @submit.prevent="handleSave"
         >
           <SettingsSection
             title="Profile"
@@ -168,7 +202,9 @@ function resetForm() {
                 v-model="form.name"
                 class="w-full max-w-md"
                 placeholder="Your name"
+                maxlength="100"
               />
+              <p v-if="!form.name.trim()" class="mt-2 text-sm text-muted">Enter a name.</p>
             </SettingsRow>
 
             <SettingsRow
@@ -188,6 +224,8 @@ function resetForm() {
                 <ProfilePhoneInput
                   v-model="form.phoneNumber"
                   :default-country="form.locale === 'fr' ? 'FR' : 'US'"
+                  :disabled="phoneActionPending"
+                  @commit="commitPhoneNumber"
                 />
                 <template v-if="isCurrentPhone && profile?.smsEnabled">
                   <p class="text-sm text-muted">Phone verified · SMS consent saved</p>
@@ -236,6 +274,7 @@ function resetForm() {
                 :rows="3"
                 class="w-full"
                 placeholder="Staff engineer at Acme. Building observability tools. Based in Paris."
+                maxlength="500"
                 autoresize
                 :maxrows="8"
               />
@@ -282,52 +321,10 @@ function resetForm() {
               />
             </SettingsRow>
           </SettingsSection>
-        </form>
+        </div>
+        <p v-else role="alert" class="text-sm text-error">Could not load your profile.</p>
       </div>
     </template>
 
-    <template #footer>
-      <Transition
-        enter-active-class="transition duration-200 ease-out"
-        enter-from-class="translate-y-full opacity-0"
-        enter-to-class="translate-y-0 opacity-100"
-        leave-active-class="transition duration-150 ease-in"
-        leave-from-class="translate-y-0 opacity-100"
-        leave-to-class="translate-y-full opacity-0"
-      >
-        <div
-          v-if="isDirty && !pending"
-          class="border-t border-default bg-elevated/95 backdrop-blur supports-[backdrop-filter]:bg-elevated/90"
-        >
-          <div class="mx-auto w-full max-w-2xl px-6">
-            <div class="flex items-center justify-between gap-4 py-3">
-              <p class="text-sm text-muted">
-                You have unsaved changes
-              </p>
-              <div class="flex gap-2">
-                <UButton
-                  color="neutral"
-                  variant="outline"
-                  size="sm"
-                  :disabled="saving"
-                  @click="resetForm"
-                >
-                  Discard
-                </UButton>
-                <UButton
-                  color="primary"
-                  size="sm"
-                  form="profile-form"
-                  type="submit"
-                  :loading="saving"
-                >
-                  Save changes
-                </UButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </template>
   </UDashboardPanel>
 </template>

@@ -32,7 +32,7 @@ export async function getOrCreateProfileForUser(userId: string): Promise<UserPro
     return existing;
   }
 
-  await db.insert(schema.userProfiles).values({ userId });
+  await db.insert(schema.userProfiles).values({ userId }).onConflictDoNothing();
 
   const created = await getProfileForUser(userId);
   if (!created) {
@@ -78,29 +78,29 @@ export async function getProfileWithUser(userId: string): Promise<UserProfileWit
 export async function updateProfileForUser(userId: string, patch: UserProfilePatch) {
   await getOrCreateProfileForUser(userId);
 
-  if (patch.name !== undefined) {
-    await db.update(schema.user)
-      .set({ name: patch.name.trim() })
-      .where(eq(schema.user.id, userId));
-  }
-
-  await db.update(schema.userProfiles)
-    .set({
-      ...(patch.timezone !== undefined ? { timezone: patch.timezone } : {}),
-      ...(patch.locale !== undefined ? { locale: patch.locale } : {}),
-      ...(patch.bio !== undefined ? { bio: patch.bio } : {}),
-    })
-    .where(eq(schema.userProfiles.userId, userId));
-
-  if (patch.phoneNumber !== undefined) {
-    const phone = patch.phoneNumber?.trim() ?? "";
-    if (phone) {
-      await upsertPhoneLinkForAppUser(userId, phone);
+  await db.transaction(async (transaction) => {
+    if (patch.name !== undefined) {
+      await transaction.update(schema.user)
+        .set({ name: patch.name.trim() })
+        .where(eq(schema.user.id, userId));
     }
-    else {
-      await deletePhoneLinkForAppUser(userId);
+
+    if (patch.timezone !== undefined || patch.locale !== undefined || patch.bio !== undefined) {
+      await transaction.update(schema.userProfiles)
+        .set({ timezone: patch.timezone, locale: patch.locale, bio: patch.bio })
+        .where(eq(schema.userProfiles.userId, userId));
     }
-  }
+
+    if (patch.phoneNumber !== undefined) {
+      const phone = patch.phoneNumber?.trim() ?? "";
+      if (phone) {
+        await upsertPhoneLinkForAppUser(userId, phone, undefined, transaction);
+      }
+      else {
+        await deletePhoneLinkForAppUser(userId, transaction);
+      }
+    }
+  });
 
   return getProfileWithUser(userId);
 }

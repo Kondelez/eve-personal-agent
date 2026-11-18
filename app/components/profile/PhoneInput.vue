@@ -9,12 +9,14 @@ import {
 const props = withDefaults(defineProps<{
   defaultCountry?: string;
   size?: "sm" | "md" | "lg" | "xl";
+  disabled?: boolean;
 }>(), {
   defaultCountry: "FR",
   size: "lg",
 });
 
 const model = defineModel<string>({ default: "" });
+const emit = defineEmits<{ commit: [value: string] }>();
 
 const countryCode = ref(props.defaultCountry);
 const localNumber = ref("");
@@ -49,6 +51,7 @@ function commitNumber(event: Event) {
   if (!(event.target instanceof HTMLInputElement)) return;
   updateNumber(event.target.value);
   syncFromModel(model.value);
+  emit("commit", model.value);
 }
 
 watch(model, (value) => {
@@ -71,6 +74,7 @@ watch(model, (value) => {
       :filter-fields="['name', 'code', 'dialCode']"
       :content="{ align: 'start' }"
       :size="size"
+      :disabled="disabled"
       :ui="{
         base: 'pe-8',
         content: 'min-w-48',
@@ -104,6 +108,7 @@ watch(model, (value) => {
       aria-label="Mobile number"
       class="min-w-0 flex-1"
       :size="size"
+      :disabled="disabled"
       :placeholder="placeholder"
       :style="{ '--dial-code-length': `${dialCode.length + 1.5}ch` }"
       :ui="{

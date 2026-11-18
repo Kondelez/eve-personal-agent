@@ -93,11 +93,9 @@ export async function disableSmsForAppUser(appUserId: string) {
     .where(eq(schema.phoneLinks.appUserId, appUserId));
 }
 
-export async function deletePhoneLinkForAppUser(appUserId: string) {
-  const before = await getPhoneLinkForAppUser(appUserId);
-
-  await db.delete(schema.phoneLinks)
-    .where(eq(schema.phoneLinks.appUserId, appUserId));
-
-  return Boolean(before);
+export async function deletePhoneLinkForAppUser(appUserId: string, writer: Pick<typeof db, "delete"> = db) {
+  const [deleted] = await writer.delete(schema.phoneLinks)
+    .where(eq(schema.phoneLinks.appUserId, appUserId))
+    .returning({ appUserId: schema.phoneLinks.appUserId });
+  return Boolean(deleted);
 }
