@@ -1,7 +1,8 @@
 import type { AuthFn } from "eve/channels/auth";
 import { eveChannel } from "eve/channels/eve";
-import { vercelOidc } from "eve/channels/auth";
+import { ForbiddenError, vercelOidc } from "eve/channels/auth";
 import { auth } from "../../auth";
+import { getOnboardingProfile } from "../../server/utils/onboarding";
 
 function appSession(): AuthFn<Request> {
   return async (request) => {
@@ -11,6 +12,10 @@ function appSession(): AuthFn<Request> {
 
     if (!session?.user) {
       return null;
+    }
+
+    if (!(await getOnboardingProfile(session.user.id))?.complete) {
+      throw new ForbiddenError({ message: "Complete your profile to open Eve." });
     }
 
     return {

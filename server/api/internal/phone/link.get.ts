@@ -1,5 +1,6 @@
 import { phoneLinkQuerySchema } from "~~/server/schemas/phone";
 import { getPhoneLinkByPhoneNumber, getSmsLinkByPhoneNumber } from "~~/server/utils/phone-links";
+import { getOnboardingProfile } from "~~/server/utils/onboarding";
 import { requireInternalRequest } from "~~/server/utils/internal-api";
 
 export default defineEventHandler(async (event) => {
@@ -10,5 +11,5 @@ export default defineEventHandler(async (event) => {
     ? await getSmsLinkByPhoneNumber(phoneNumber)
     : await getPhoneLinkByPhoneNumber(phoneNumber);
 
-  return { link: link ?? null };
+  return { link: link && (await getOnboardingProfile(link.appUserId))?.complete ? link : null };
 });

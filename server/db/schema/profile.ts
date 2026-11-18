@@ -9,6 +9,7 @@ export const userProfiles = pgTable("user_profiles", {
   timezone: text("timezone").notNull().default("UTC"),
   locale: text("locale").notNull().default("en"),
   bio: text("bio").notNull().default(""),
+  onboardingCompletedAt: timestamp("onboarding_completed_at"),
   updatedAt: timestamp("updated_at")
     .defaultNow()
     .$onUpdate(() => new Date())

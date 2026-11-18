@@ -3,6 +3,7 @@ import { betterAuth } from "better-auth";
 import { getIP } from "better-auth/api";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { db, schema } from "@nuxthub/db";
+import { onboardingEmail } from "./onboarding-email";
 import { phoneSignIn } from "./phone-sign-in";
 import { sendSignInEmail } from "./sign-in-email";
 
@@ -31,9 +32,9 @@ export const auth = betterAuth({
     provider: "pg",
     schema,
   }),
-  emailAndPassword: {
-    enabled: true,
-    disableSignUp: true,
+  session: {
+    expiresIn: 30 * 24 * 60 * 60,
+    updateAge: 24 * 60 * 60,
   },
   plugins: [
     magicLink({
@@ -45,5 +46,6 @@ export const auth = betterAuth({
       },
     }),
     phoneSignIn(),
+    onboardingEmail(),
   ],
 });

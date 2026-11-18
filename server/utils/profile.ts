@@ -1,12 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
-import { isPhoneAccountEmail } from "#shared/sign-in";
 import type { UserProfile, UserProfilePatch, UserProfileWithUser } from "#shared/types/profile";
-import {
-  deletePhoneLinkForAppUser,
-  getPhoneLinkForAppUser,
-  upsertPhoneLinkForAppUser,
-} from "~~/server/utils/phone-links";
+import { getPhoneLinkForAppUser } from "./phone-links";
 
 function rowToProfile(row: typeof schema.userProfiles.$inferSelect): UserProfile {
   return {
@@ -81,14 +76,10 @@ export async function updateProfileForUser(userId: string, patch: UserProfilePat
 
   await db.transaction(async (transaction) => {
     if (patch.phoneNumber !== undefined) {
-      const [user] = await transaction.select({ email: schema.user.email }).from(schema.user)
-        .where(eq(schema.user.id, userId));
-      if (user && isPhoneAccountEmail(user.email)) {
-        const [link] = await transaction.select({ phone: schema.phoneLinks.phoneNumber }).from(schema.phoneLinks)
-          .where(eq(schema.phoneLinks.appUserId, userId)).for("update");
-        if ((patch.phoneNumber?.trim() ?? "") !== link?.phone) {
-          throw createError({ statusCode: 409, statusMessage: "Verify a new number to change the mobile number you use to sign in." });
-        }
+      const [link] = await transaction.select({ phone: schema.phoneLinks.phoneNumber }).from(schema.phoneLinks)
+        .where(eq(schema.phoneLinks.appUserId, userId));
+      if ((patch.phoneNumber?.trim() ?? "") !== link?.phone) {
+        throw createError({ statusCode: 409, statusMessage: "Verify a new number to change your mobile number." });
       }
     }
 
@@ -102,16 +93,6 @@ export async function updateProfileForUser(userId: string, patch: UserProfilePat
       await transaction.update(schema.userProfiles)
         .set({ timezone: patch.timezone, locale: patch.locale, bio: patch.bio })
         .where(eq(schema.userProfiles.userId, userId));
-    }
-
-    if (patch.phoneNumber !== undefined) {
-      const phone = patch.phoneNumber?.trim() ?? "";
-      if (phone) {
-        await upsertPhoneLinkForAppUser(userId, phone, undefined, transaction);
-      }
-      else {
-        await deletePhoneLinkForAppUser(userId, transaction);
-      }
     }
   });
 

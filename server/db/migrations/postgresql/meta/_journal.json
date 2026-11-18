@@ -15,6 +15,13 @@
       "when": 1795021626670,
       "tag": "0001_verified_sms",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795026124527,
+      "tag": "0002_complete_profile",
+      "breakpoints": true
     }
   ]
 }

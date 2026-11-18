@@ -11,7 +11,10 @@ export default defineNuxtConfig({
     viewTransition: true,
   },
   routeRules: {
-    "/login": { prerender: true },
+    "/login": { headers: privateNoStore },
+    "/complete-profile": { headers: privateNoStore },
+    "/api/onboarding": { headers: privateNoStore },
+    "/api/onboarding/**": { headers: privateNoStore },
     "/": { ssr: true, headers: privateNoStore },
     "/chat/**": { ssr: true, headers: privateNoStore },
     "/settings/**": { ssr: true, headers: privateNoStore },
@@ -40,10 +43,7 @@ export default defineNuxtConfig({
   },
   nitro: {
     compressPublicAssets: true,
-    prerender: {
-      routes: ["/login"],
-      crawlLinks: false,
-    },
+    prerender: { crawlLinks: false },
   },
   app: {
     head: {

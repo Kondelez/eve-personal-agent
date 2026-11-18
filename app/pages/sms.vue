@@ -11,7 +11,7 @@ useSeoMeta({ title: "Eve SMS | Kondelez" });
 
     <section id="terms" class="space-y-3">
       <h2 class="text-lg font-medium text-highlighted">SMS terms</h2>
-      <p>To connect SMS, sign in to Eve, open Settings → Profile, enter your mobile number and verify it by text. SMS chat requires a separate, optional checkbox. Once SMS chat is available, Eve sends AI-generated replies when you text it.</p>
+      <p>When signing up for Eve, verify your mobile number by text and agree to receive AI-generated SMS replies from Kondelez Eve. Once SMS chat is available, Eve sends replies when you text it.</p>
       <p>Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. You can also turn off SMS replies in Profile. Carriers are not liable for delayed or undelivered messages.</p>
       <p>For support, <a href="https://kondelez.com/contact" class="underline">contact Kondelez</a>.</p>
     </section>

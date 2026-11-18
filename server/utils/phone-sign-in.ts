@@ -5,7 +5,7 @@ import { setSessionCookie } from "better-auth/cookies";
 import { and, eq, gt } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
 import { z } from "zod";
-import { PHONE_ACCOUNT_EMAIL_DOMAIN } from "#shared/sign-in";
+import { PHONE_ACCOUNT_EMAIL_DOMAIN, SIGN_UP_PLACEHOLDER_NAME } from "#shared/sign-in";
 import { checkPhoneVerificationSchema, startPhoneVerificationSchema } from "../schemas/phone";
 import { reserveSignInDelivery, signInKey } from "./sign-in-rate-limit";
 import { requestTwilioVerify } from "./twilio-verify";
@@ -49,7 +49,7 @@ async function resolvePhoneAccount(phoneNumber: string, attemptId: string) {
     const userId = randomUUID();
     const [newUser] = await transaction.insert(schema.user).values({
       id: userId,
-      name: "Eve user",
+      name: SIGN_UP_PLACEHOLDER_NAME,
       email: `${userId}@${PHONE_ACCOUNT_EMAIL_DOMAIN}`,
     }).returning();
     if (!newUser) throw APIError.fromStatus("INTERNAL_SERVER_ERROR", { message: "Could not create your account." });

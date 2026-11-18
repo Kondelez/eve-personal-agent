@@ -1,6 +1,7 @@
 import { and, eq, gt, lt } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
 import type { H3Event } from "h3";
+import { finishOnboarding } from "./onboarding";
 import { upsertPhoneLinkForAppUser } from "./phone-links";
 import { requestTwilioVerify } from "./twilio-verify";
 
@@ -11,6 +12,7 @@ type PhoneChallenge = {
   phoneNumber: string;
   smsConsent: boolean;
   verificationSid?: string;
+  onboardingName?: string;
 };
 
 export function requirePhoneVerificationRequest(event: H3Event) {
@@ -60,12 +62,12 @@ export async function startPhoneVerification(userId: string, challenge: Omit<Pho
     .where(and(eq(schema.verification.id, id), eq(schema.verification.createdAt, now)));
 }
 
-export async function checkPhoneVerification(userId: string, code: string) {
+export async function checkPhoneVerification(userId: string, code: string, onboarding = false) {
   const id = `eve-sms:${userId}`;
   const [entry] = await db.select().from(schema.verification)
     .where(and(eq(schema.verification.id, id), gt(schema.verification.expiresAt, new Date())));
   const challenge = entry ? JSON.parse(entry.value) as PhoneChallenge : undefined;
-  if (!entry || !challenge?.verificationSid) {
+  if (!entry || !challenge?.verificationSid || onboarding !== Boolean(challenge.onboardingName)) {
     throw createError({ statusCode: 400, statusMessage: "Request a new verification code" });
   }
 
@@ -91,10 +93,23 @@ export async function checkPhoneVerification(userId: string, code: string) {
         throw createError({ statusCode: 400, statusMessage: "Request a new verification code" });
       }
 
+      // Lock the account before changing its phone and completing the profile.
+      if (challenge.onboardingName) {
+        await transaction.select({ id: schema.user.id }).from(schema.user)
+          .where(eq(schema.user.id, userId)).for("update");
+        const [link] = await transaction.select().from(schema.phoneLinks)
+          .where(eq(schema.phoneLinks.appUserId, userId)).for("update");
+        if (link?.verifiedAt) {
+          throw createError({ statusCode: 409, statusMessage: "This account already has a verified mobile number." });
+        }
+      }
       await upsertPhoneLinkForAppUser(userId, challenge.phoneNumber, {
         date: new Date().toISOString(),
         smsConsent: challenge.smsConsent,
       }, transaction);
+      if (challenge.onboardingName && !await finishOnboarding(transaction, userId, challenge.onboardingName)) {
+        throw createError({ statusCode: 409, statusMessage: "Verify your email first." });
+      }
     });
   }
   catch (error) {

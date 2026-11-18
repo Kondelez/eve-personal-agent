@@ -1,20 +1,22 @@
 <script setup lang="ts">
 import { authClient } from "~/lib/auth-client";
 import { isVerificationPhoneNumber, normalizePhoneNumberInput } from "#shared/phone-codes";
-import { safeSignInDestination } from "#shared/sign-in";
+import { safeSignInDestination, SIGN_UP_PLACEHOLDER_NAME } from "#shared/sign-in";
 
-definePageMeta({ layout: false, prerender: true });
+definePageMeta({ layout: false });
 useSeoMeta({ title: "Sign in to Eve" });
 
 const route = useRoute();
-const stage = ref<"identify" | "email-sent" | "phone-code" | "password">("identify");
+const stage = ref<"identify" | "email-sent" | "phone-code">("identify");
 const identifier = ref("");
 const identifierInput = useTemplateRef("identifierInput");
 const destination = ref("");
 const attempt = ref("");
 const code = ref("");
-const password = ref("");
-const error = ref("");
+const codeInput = useTemplateRef("codeInput");
+const error = ref(route.query.emailStatus === "session-required"
+  ? "Sign in with your mobile number, then reopen the verification link."
+  : "");
 const loading = ref(false);
 const showLinkError = ref(Boolean(route.query.error));
 const redirectTo = computed(() => safeSignInDestination(route.query.redirect));
@@ -23,20 +25,14 @@ function reset() {
   stage.value = "identify";
   code.value = "";
   attempt.value = "";
-  password.value = "";
   error.value = "";
   showLinkError.value = false;
-}
-
-function usePassword() {
-  reset();
-  stage.value = "password";
 }
 
 async function sendEmailLink(email: string) {
   const result = await authClient.signIn.magicLink({
     email,
-    name: "Eve user",
+    name: SIGN_UP_PLACEHOLDER_NAME,
     callbackURL: redirectTo.value,
     errorCallbackURL: "/login",
   });
@@ -77,16 +73,8 @@ async function handleSubmit(resend = false) {
     else if (stage.value === "phone-code") {
       await $fetch("/api/auth/phone-login/verify", {
         method: "POST",
-        body: { attempt: attempt.value, code: code.value },
+        body: { attempt: attempt.value, code: codeInput.value?.inputRef?.value ?? code.value },
       });
-      await navigateTo(redirectTo.value);
-    }
-    else if (stage.value === "password") {
-      const result = await authClient.signIn.email({ email: value, password: password.value });
-      if (result.error) {
-        error.value = result.error.message ?? "Could not sign in.";
-        return;
-      }
       await navigateTo(redirectTo.value);
     }
     else if (value.includes("@")) {
@@ -130,31 +118,20 @@ async function handleSubmit(resend = false) {
 
         <form class="space-y-4" @submit.prevent="handleSubmit()">
           <UFormField
-            v-if="stage === 'identify' || stage === 'password'"
-            :label="stage === 'password' ? 'Email' : 'Email or mobile number'"
+            v-if="stage === 'identify'"
+            label="Email or mobile number"
           >
             <UInput
               ref="identifierInput"
               v-model="identifier"
               class="w-full"
-              :type="stage === 'password' ? 'email' : 'text'"
               name="identifier"
               autocomplete="username"
               autocapitalize="none"
               autocorrect="off"
               :spellcheck="false"
               required
-              :placeholder="stage === 'password' ? 'you@example.com' : 'you@example.com or 917 555 0147'"
-            />
-          </UFormField>
-
-          <UFormField v-if="stage === 'password'" label="Password">
-            <UInput
-              v-model="password"
-              class="w-full"
-              type="password"
-              autocomplete="current-password"
-              required
+              placeholder="you@example.com or 917 555 0147"
             />
           </UFormField>
 
@@ -168,6 +145,7 @@ async function handleSubmit(resend = false) {
             </p>
             <UFormField label="Verification code">
               <UInput
+                ref="codeInput"
                 v-model="code"
                 class="w-full"
                 inputmode="numeric"
@@ -201,15 +179,6 @@ async function handleSubmit(resend = false) {
           <p v-if="stage === 'identify'" class="mb-3 text-xs text-muted">
             By continuing with a mobile number, you agree to receive a verification text. Message and data rates may apply.
           </p>
-          <button
-            v-if="stage === 'identify'"
-            type="button"
-            class="text-sm text-muted hover:underline"
-            :disabled="loading"
-            @click="usePassword"
-          >
-            Use an existing password
-          </button>
           <button
             v-else
             type="button"
