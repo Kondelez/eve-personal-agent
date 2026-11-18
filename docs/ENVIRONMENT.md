@@ -81,6 +81,17 @@ Public URL of the Nuxt app. Used for auth callbacks and as the base URL for agen
 | Local | `http://localhost:3000` |
 | Production | `https://your-domain.vercel.app` |
 
+### Passwordless sign-in
+
+| Variable | Purpose |
+|----------|---------|
+| `RESEND_API_KEY` | Sending-only Resend key scoped to the verified email domain |
+| `EVE_AUTH_EMAIL_FROM` | Transactional sender address, such as `Eve <sign-in@example.com>` |
+| `TWILIO_ACCOUNT_SID` | Twilio account that owns the Verify services |
+| `TWILIO_AUTH_TOKEN` | Twilio account token |
+| `TWILIO_SIGN_IN_VERIFY_SERVICE_SID` | Six-digit Verify service for account signup and sign-in |
+| `TWILIO_VERIFY_SERVICE_SID` | Separate Verify service for changing or linking a number in Profile |
+
 ## Internal API
 
 ### `INTERNAL_API_SECRET` (required)

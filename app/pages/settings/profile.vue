@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { authClient } from "~/lib/auth-client";
 import { isVerificationPhoneNumber } from "#shared/phone-codes";
+import { isPhoneAccountEmail } from "#shared/sign-in";
 import type { UserProfilePatch } from "#shared/types/profile";
 
 const { profile, pending, refresh, saveProfile, timezones, locales } = useProfile();
@@ -25,6 +26,7 @@ const smsCode = ref("");
 const codeSentTo = ref("");
 const phoneActionPending = ref(false);
 const phoneError = ref("");
+const phoneOnly = computed(() => isPhoneAccountEmail(profile.value?.email ?? ""));
 const isCurrentPhone = computed(() => form.phoneNumber === profile.value?.phoneNumber);
 const canSendCode = computed(() => isVerificationPhoneNumber(form.phoneNumber));
 
@@ -39,7 +41,7 @@ const pendingEdits = computed<UserProfilePatch>(() => {
   if (bio !== current.bio) patch.bio = bio;
   if (form.timezone !== current.timezone) patch.timezone = form.timezone;
   if (form.locale !== current.locale) patch.locale = form.locale;
-  if (committedPhoneNumber.value === form.phoneNumber && form.phoneNumber !== (current.phoneNumber ?? "")) {
+  if (!phoneOnly.value && committedPhoneNumber.value === form.phoneNumber && form.phoneNumber !== (current.phoneNumber ?? "")) {
     patch.phoneNumber = form.phoneNumber || null;
   }
   return patch;
@@ -209,9 +211,9 @@ async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms")
 
             <SettingsRow
               label="Email"
-              description="Used for sign-in. Contact support to change it."
+              :description="phoneOnly ? 'You signed up using your mobile number.' : 'Used for sign-in. Contact support to change it.'"
             >
-              <p class="text-sm text-toned">
+              <p v-if="!phoneOnly" class="text-sm text-toned">
                 {{ profile?.email }}
               </p>
             </SettingsRow>
@@ -227,6 +229,9 @@ async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms")
                   :disabled="phoneActionPending"
                   @commit="commitPhoneNumber"
                 />
+                <p v-if="phoneOnly && !isCurrentPhone" class="text-sm text-muted">
+                  Verify the new number to change your sign-in number.
+                </p>
                 <template v-if="isCurrentPhone && profile?.smsEnabled">
                   <p class="text-sm text-muted">Phone verified · SMS consent saved</p>
                   <UButton type="button" variant="outline" color="neutral" :loading="phoneActionPending" @click="submitPhoneAction('disable-sms')">

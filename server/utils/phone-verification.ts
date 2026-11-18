@@ -2,6 +2,7 @@ import { and, eq, gt, lt } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
 import type { H3Event } from "h3";
 import { upsertPhoneLinkForAppUser } from "./phone-links";
+import { requestTwilioVerify } from "./twilio-verify";
 
 const RESEND_DELAY_MS = 60_000;
 const VERIFICATION_TTL_MS = 10 * 60_000;
@@ -19,21 +20,12 @@ export function requirePhoneVerificationRequest(event: H3Event) {
   }
 }
 
-async function requestTwilioVerify(path: "Verifications" | "VerificationCheck", body: Record<string, string>) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const service = process.env.TWILIO_VERIFY_SERVICE_SID;
-  if (!accountSid || !token || !service) {
+function requestProfileVerification(path: "Verifications" | "VerificationCheck", body: Record<string, string>) {
+  const service = process.env.TWILIO_VERIFY_SERVICE_SID?.trim();
+  if (!service) {
     throw createError({ statusCode: 503, statusMessage: "Phone verification is unavailable" });
   }
-
-  const response = await fetch(`https://verify.twilio.com/v2/Services/${service}/${path}`, {
-    method: "POST",
-    headers: { authorization: `Basic ${Buffer.from(`${accountSid}:${token}`).toString("base64")}` },
-    body: new URLSearchParams(body),
-    signal: AbortSignal.timeout(8_000),
-  });
-  return response;
+  return requestTwilioVerify(service, path, body);
 }
 
 export async function startPhoneVerification(userId: string, challenge: Omit<PhoneChallenge, "verificationSid">) {
@@ -54,7 +46,7 @@ export async function startPhoneVerification(userId: string, challenge: Omit<Pho
     throw createError({ statusCode: 429, statusMessage: "Wait a minute before requesting another code" });
   }
 
-  const response = await requestTwilioVerify("Verifications", { To: challenge.phoneNumber, Channel: "sms" });
+  const response = await requestProfileVerification("Verifications", { To: challenge.phoneNumber, Channel: "sms" });
   if (!response.ok) {
     throw createError({ statusCode: 502, statusMessage: "Could not send a verification code" });
   }
@@ -77,7 +69,7 @@ export async function checkPhoneVerification(userId: string, code: string) {
     throw createError({ statusCode: 400, statusMessage: "Request a new verification code" });
   }
 
-  const response = await requestTwilioVerify("VerificationCheck", { VerificationSid: challenge.verificationSid, Code: code });
+  const response = await requestProfileVerification("VerificationCheck", { VerificationSid: challenge.verificationSid, Code: code });
   if (response.status >= 500) {
     throw createError({ statusCode: 502, statusMessage: "Phone verification is temporarily unavailable" });
   }

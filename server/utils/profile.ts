@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
+import { isPhoneAccountEmail } from "#shared/sign-in";
 import type { UserProfile, UserProfilePatch, UserProfileWithUser } from "#shared/types/profile";
 import {
   deletePhoneLinkForAppUser,
@@ -79,6 +80,18 @@ export async function updateProfileForUser(userId: string, patch: UserProfilePat
   await getOrCreateProfileForUser(userId);
 
   await db.transaction(async (transaction) => {
+    if (patch.phoneNumber !== undefined) {
+      const [user] = await transaction.select({ email: schema.user.email }).from(schema.user)
+        .where(eq(schema.user.id, userId));
+      if (user && isPhoneAccountEmail(user.email)) {
+        const [link] = await transaction.select({ phone: schema.phoneLinks.phoneNumber }).from(schema.phoneLinks)
+          .where(eq(schema.phoneLinks.appUserId, userId)).for("update");
+        if ((patch.phoneNumber?.trim() ?? "") !== link?.phone) {
+          throw createError({ statusCode: 409, statusMessage: "Verify a new number to change the mobile number you use to sign in." });
+        }
+      }
+    }
+
     if (patch.name !== undefined) {
       await transaction.update(schema.user)
         .set({ name: patch.name.trim() })
