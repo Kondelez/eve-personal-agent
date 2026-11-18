@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ACCOUNT_CHAT_PATH } from "#shared/types/account-chat";
 import type { AccountChat } from "#shared/types/account-chat";
+import type { ChatDraft } from "~/utils/chat/attachments";
 
 const chat = shallowRef<AccountChat>();
-const messageToSend = ref<string>();
+const messageToSend = shallowRef<ChatDraft>();
+const searchOpen = ref(false);
 const loading = ref(false);
 const error = ref(false);
 
-async function openChat(text?: string) {
+async function openChat(draft?: ChatDraft) {
   if (loading.value) return;
-  if (text) messageToSend.value = text;
+  if (draft) messageToSend.value = draft;
   loading.value = true;
   error.value = false;
   try {
@@ -17,14 +19,14 @@ async function openChat(text?: string) {
       method: "POST",
       body: {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        closedSessionId: text ? chat.value?.sessionId : undefined,
+        closedSessionId: draft ? chat.value?.sessionId : undefined,
       },
     });
-    if (text && next.sessionId === chat.value?.sessionId) {
+    if (draft && next.sessionId === chat.value?.sessionId) {
       error.value = true;
       return;
     }
-    messageToSend.value = text;
+    messageToSend.value = draft;
     chat.value = next;
   }
   catch {
@@ -55,6 +57,18 @@ onMounted(() => void openChat());
         </template>
 
         <UButton
+          v-if="chat && !error"
+          type="button"
+          variant="ghost"
+          color="neutral"
+          icon="i-lucide-search"
+          aria-label="Find in conversation"
+          title="Find in conversation"
+          :aria-expanded="searchOpen"
+          class="rounded-lg"
+          @click="searchOpen = !searchOpen"
+        />
+        <UButton
           to="/settings/profile"
           variant="ghost"
           color="neutral"
@@ -74,6 +88,7 @@ onMounted(() => void openChat());
       <ChatConversation
         v-else-if="chat"
         :key="chat.sessionId"
+        v-model:search-open="searchOpen"
         :chat="chat"
         :pending-message="messageToSend"
         @recover="openChat"

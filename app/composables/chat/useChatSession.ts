@@ -2,6 +2,8 @@ import type { EveMessage } from "eve/vue";
 import type { Answer } from "eve/events";
 import type { UIMessage } from "ai";
 import type { AccountChat } from "#shared/types/account-chat";
+import { draftContent } from "~/utils/chat/attachments";
+import type { ChatDraft } from "~/utils/chat/attachments";
 import { clearAuthorizationChallenges, recordAuthorizationEvent } from "~/composables/chat/useAuthorizationChallenges";
 import { recordStreamEvent } from "~/composables/chat/stream-log";
 import { clearTurnFailure, isFailureEvent, recordTurnFailure, turnFailure } from "~/composables/chat/turn-errors";
@@ -40,7 +42,7 @@ function isSessionGone(error: unknown) {
 }
 
 /** Connect Nuxt's chat components to the account's shared Eve session. */
-export function useChatSession(chat: AccountChat, recover: (text: string) => void) {
+export function useChatSession(chat: AccountChat, recover: (draft: ChatDraft) => void) {
   const chatId = chat.sessionId;
   const smsDeliveries = new Set<string>();
   const smsTurns = shallowRef(new Set<string>());
@@ -77,7 +79,8 @@ export function useChatSession(chat: AccountChat, recover: (text: string) => voi
   // Text held while a send waits for a replay to finish. eve only projects a
   // user message once the turn is handed over, so it is shown here instead —
   // in the transcript, where a sent message belongs.
-  const queued = ref<string>();
+  const queued = shallowRef<ChatDraft | null>();
+  let lastWebDraft: ChatDraft | undefined;
 
   const messages = computed(() => {
     const replayed = toUIMessages(agent.messages.value);
@@ -92,7 +95,10 @@ export function useChatSession(chat: AccountChat, recover: (text: string) => voi
     return [...sent, {
       id: `pending:${chatId}`,
       role: "user",
-      parts: [{ type: "text", text: queued.value }],
+      parts: [
+        ...(queued.value.text ? [{ type: "text" as const, text: queued.value.text }] : []),
+        ...queued.value.attachments.map(({ filename, mediaType }) => ({ type: "file" as const, filename, mediaType, url: "" })),
+      ],
     } as UIMessage];
   });
 
@@ -127,10 +133,10 @@ export function useChatSession(chat: AccountChat, recover: (text: string) => voi
   const isBusy = computed(() => status.value === "submitted" || status.value === "streaming");
 
   /** eve rejects sends while a session replays; wait rather than drop them. */
-  async function whenSendable(text?: string) {
+  async function whenSendable(draft?: ChatDraft) {
     if (agent.status.value !== "resuming") return;
 
-    queued.value = text ?? "";
+    queued.value = draft ?? null;
     try {
       await new Promise<void>((resolve) => {
         const stop = watch(agent.status, (value) => {
@@ -145,25 +151,25 @@ export function useChatSession(chat: AccountChat, recover: (text: string) => voi
     }
   }
 
-  async function deliver(text: string) {
+  async function deliver(draft: ChatDraft) {
     try {
-      await agent.send(text);
+      await agent.send(draftContent(draft));
+      lastWebDraft = draft;
       return true;
     }
     catch (error) {
       if (!isSessionGone(error)) throw error;
-      recover(text);
+      recover(draft);
       return false;
     }
   }
 
-  async function send(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+  async function send(draft: ChatDraft) {
+    if (!draft.text && !draft.attachments.length) return false;
 
     clearTurnFailure(chatId);
-    await whenSendable(trimmed);
-    return deliver(trimmed);
+    await whenSendable(draft);
+    return deliver(draft);
   }
 
   async function respond(answers: readonly Answer[]) {
@@ -181,12 +187,13 @@ export function useChatSession(chat: AccountChat, recover: (text: string) => voi
       return;
     }
 
-    const text = lastUserMessageText(agent.messages.value);
-    if (!text) return;
+    if (lastWebDraft) {
+      await send(lastWebDraft);
+      return;
+    }
 
-    clearTurnFailure(chatId);
-    await whenSendable(text);
-    await deliver(text);
+    const text = lastUserMessageText(agent.messages.value);
+    if (text) await send({ text, attachments: [] });
   }
 
   function isSms(message: UIMessage) {
