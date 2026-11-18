@@ -1,10 +1,6 @@
 import { defineAgent } from "eve";
 import { openai } from "eve/models/openai";
 
-if (!process.env.OPENAI_API_KEY && process.env.OPENAI_KEY) {
-  process.env.OPENAI_API_KEY = process.env.OPENAI_KEY;
-}
-
 export default defineAgent({
   model: openai("gpt-5.4-mini-2026-03-17"),
   modelContextWindowTokens: 400_000,
