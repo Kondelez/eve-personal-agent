@@ -3,7 +3,7 @@ import twilio from "twilio";
 import { buildAppSessionAuth } from "../../shared/app-auth.js";
 import { fetchPhoneLink } from "../lib/phone-internal.js";
 
-const SMS_PATH = "/webhooks/twilio/sms";
+const SMS_PATH = "/eve/v1/twilio/messages";
 const E164 = /^\+[1-9]\d{7,14}$/;
 const CARRIER_KEYWORD = /^(stop|stopall|unsubscribe|cancel|end|quit|start|unstop|help|info)$/i;
 
