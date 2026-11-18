@@ -26,16 +26,29 @@ const AUDIO_EXTENSIONS: Record<string, string> = {
   "audio/basic": "au",
 };
 
-const MAX_AUDIO_BYTES = 5_000_000;
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/tiff": "tiff",
+  "image/bmp": "bmp",
+};
 
-export function twilioAudioParts(fields: Record<string, string>, accountId: string, messageId: string) {
+const MAX_MEDIA_BYTES = 5_000_000;
+
+export function twilioMediaParts(fields: Record<string, string>, accountId: string, messageId: string) {
   const count = Math.min(Number(fields.NumMedia) || 0, 10);
   if (count <= 0) return [];
 
   const media = [];
   for (let index = 0; index < count; index += 1) {
-    const mediaType = fields[`MediaContentType${index}`]?.split(";", 1)[0]?.toLowerCase().trim();
-    const extension = mediaType ? AUDIO_EXTENSIONS[mediaType] : undefined;
+    const reportedType = fields[`MediaContentType${index}`]?.split(";", 1)[0]?.toLowerCase().trim();
+    const mediaType = reportedType === "image/jpg" ? "image/jpeg" : reportedType;
+    const extensions = mediaType?.startsWith("image/") ? IMAGE_EXTENSIONS : AUDIO_EXTENSIONS;
+    const extension = mediaType && Object.hasOwn(extensions, mediaType) ? extensions[mediaType] : undefined;
     const value = fields[`MediaUrl${index}`];
     if (!mediaType || !extension || !value) continue;
 
@@ -46,14 +59,15 @@ export function twilioAudioParts(fields: Record<string, string>, accountId: stri
 
     const key = createHash("sha256").update(url.pathname).digest("hex").slice(0, 32);
     const id = `${key.slice(0, 8)}-${key.slice(8, 12)}-${key.slice(12, 16)}-${key.slice(16, 20)}-${key.slice(20)}`;
-    media.push({ id, filename: `voice-note-${id}.${extension}`, mediaType, url });
+    const name = mediaType.startsWith("image/") ? "photo" : "voice-note";
+    media.push({ id, filename: `${name}-${id}.${extension}`, mediaType, url });
   }
   return media;
 }
 
-async function readAudio(response: Response) {
-  if (!response.ok || !response.body || Number(response.headers.get("content-length")) > MAX_AUDIO_BYTES) {
-    throw new Error("Twilio voice note is unavailable.");
+async function readMedia(response: Response) {
+  if (!response.ok || !response.body || Number(response.headers.get("content-length")) > MAX_MEDIA_BYTES) {
+    throw new Error("Twilio attachment is unavailable.");
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -63,18 +77,18 @@ async function readAudio(response: Response) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > MAX_AUDIO_BYTES) throw new Error("Twilio voice note is too large.");
+      if (size > MAX_MEDIA_BYTES) throw new Error("Twilio attachment is too large.");
       chunks.push(value);
     }
   }
   finally {
     await reader.cancel().catch(() => {});
   }
-  if (!size) throw new Error("Twilio voice note is empty.");
+  if (!size) throw new Error("Twilio attachment is empty.");
   return Buffer.concat(chunks, size);
 }
 
-export async function storeTwilioAudio(userId: string, accountId: string, token: string, media: ReturnType<typeof twilioAudioParts>) {
+export async function storeTwilioMedia(userId: string, accountId: string, token: string, media: ReturnType<typeof twilioMediaParts>) {
   const auth = Buffer.from(`${accountId}:${token}`).toString("base64");
   const results = await Promise.allSettled(media.map(async ({ url, ...part }): Promise<StoredChatFile> => {
     const file = await getChatMedia(userId, part.id);
@@ -86,7 +100,7 @@ export async function storeTwilioAudio(userId: string, accountId: string, token:
       headers: { authorization: `Basic ${auth}` },
       signal: AbortSignal.timeout(6_000),
     });
-    return { ...part, bytes: await readAudio(response) };
+    return { ...part, bytes: await readMedia(response) };
   }));
   const files = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
   await saveChatMedia(userId, files);

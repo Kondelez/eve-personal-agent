@@ -9,7 +9,7 @@ import { fetchChatMedia } from "../lib/chat-media";
 import { isClosedChat, openAccountChat } from "../lib/account-chat";
 import { fetchPhoneLink } from "../lib/phone-internal.js";
 import { sendSmsReply } from "../lib/sms-reply";
-import { storeTwilioAudio, twilioAudioParts } from "../lib/twilio-audio";
+import { storeTwilioMedia, twilioMediaParts } from "../lib/twilio-media";
 import type { MessageContent } from "eve/client";
 
 const SMS_PATH = "/eve/v1/twilio/messages";
@@ -62,14 +62,14 @@ export default defineChannel({
         return new Response(null, { status: 204 });
       }
 
-      const audio = twilioAudioParts(params, params.AccountSid!, params.MessageSid!);
-      if (!text && !audio.length) return new Response(null, { status: 204 });
+      const media = twilioMediaParts(params, params.AccountSid!, params.MessageSid!);
+      if (!text && !media.length) return new Response(null, { status: 204 });
 
       const link = await fetchPhoneLink(params.From, "sms");
       if (!link?.verifiedAt) return new Response(null, { status: 204 });
 
-      const { parts, failed } = await storeTwilioAudio(link.appUserId, params.AccountSid!, token, audio);
-      const mediaNote = failed ? "[A voice attachment could not be retrieved.]" : "";
+      const { parts, failed } = await storeTwilioMedia(link.appUserId, params.AccountSid!, token, media);
+      const mediaNote = failed ? "[An MMS attachment could not be retrieved.]" : "";
       const messageText = [text, mediaNote].filter(Boolean).join("\n");
       const message: MessageContent = parts.length
         ? [...(messageText ? [{ type: "text" as const, text: messageText }] : []), ...parts]
