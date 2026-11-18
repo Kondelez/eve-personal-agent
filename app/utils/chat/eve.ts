@@ -1,6 +1,8 @@
 import { isDynamicToolUIPart, isToolUIPart } from "ai";
 import type { DynamicToolUIPart, UIMessage } from "ai";
 import type { EveMessage, EveMessagePart, EveToolPart, Interaction } from "eve/vue";
+import { chatMediaReference } from "#shared/chat-media";
+import { ATTACHMENT_HISTORY_TEXT, readHistoryId } from "#shared/types/account-chat";
 
 type UIPart = UIMessage["parts"][number];
 
@@ -127,8 +129,24 @@ export function toUIMessages(messages: readonly EveMessage[]): UIMessage[] {
       id: message.id,
       role: message.role,
       metadata: message.metadata,
-      parts: toUIParts(message.parts),
+      parts: hydrateHistoryFiles(toUIParts(message.parts), message.metadata?.historyId),
     }));
+}
+
+export function hydrateHistoryFiles(parts: UIPart[], historyId?: string): UIPart[] {
+  if (!historyId) return parts;
+  const { files } = readHistoryId(historyId);
+  if (!files.length) return parts;
+
+  return [
+    ...parts.filter(part => part.type !== "text" || part.text !== ATTACHMENT_HISTORY_TEXT),
+    ...files.map(({ id, filename, mediaType }) => ({
+      type: "file" as const,
+      filename,
+      mediaType,
+      url: chatMediaReference(id),
+    })),
+  ];
 }
 
 export function hasVisibleParts(parts: UIMessage["parts"]): boolean {

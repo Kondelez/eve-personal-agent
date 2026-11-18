@@ -8,6 +8,7 @@ import {
   isToolUIPart,
 } from "ai";
 import type { FileUIPart, UIMessage } from "ai";
+import { chatMediaId, chatMediaPath } from "#shared/chat-media";
 import { isPartStreaming, isToolStreaming } from "@nuxt/ui/utils/ai";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";
 import type { ChatStatus } from "~/composables/chat/useChatSession";
@@ -34,9 +35,9 @@ const emit = defineEmits<{
   inputResponses: [responses: AgentInputResponse[]];
 }>();
 
-/** Only web URLs are linked or loaded; eve omits the URL for inline uploads. */
 function fileHref(part: FileUIPart): string | undefined {
-  return /^https?:\/\//i.test(part.url) ? part.url : undefined;
+  const id = chatMediaId(part.url);
+  return id ? chatMediaPath(id) : /^https?:\/\//i.test(part.url) ? part.url : undefined;
 }
 
 function isImageFile(part: FileUIPart): boolean {
@@ -77,6 +78,18 @@ const showThinking = computed(
         :streaming="isPartStreaming(part)"
       />
     </UChatReasoning>
+
+    <UChatTool
+      v-else-if="isEveUiToolPart(part) && part.toolName === 'transcribe_voice_note'"
+      :text="part.state === 'output-error' ? 'Voice note transcription failed' : part.state === 'output-available' ? 'Voice note transcript' : 'Transcribing voice note…'"
+      :streaming="isToolStreaming(part)"
+      :error="part.state === 'output-error'"
+      :default-open="true"
+    >
+      <p v-if="part.state === 'output-available'" class="whitespace-pre-wrap text-sm">
+        {{ (part.output as { transcript?: string })?.transcript || 'No speech detected.' }}
+      </p>
+    </UChatTool>
 
     <template v-else-if="isToolUIPart(part) || isDynamicToolUIPart(part)">
       <ChatToolWeather
@@ -148,20 +161,15 @@ const showThinking = computed(
 
     <!-- An attachment: a preview for a linked image, otherwise its name. -->
     <template v-else-if="isFileUIPart(part)">
-      <a
-        v-if="isImageFile(part)"
-        :href="fileHref(part)"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="my-1 block w-fit"
-      >
-        <img
-          :src="fileHref(part)"
-          :alt="part.filename ?? 'Attached image'"
-          class="max-h-64 max-w-full rounded-lg border border-default object-contain"
-          loading="lazy"
-        >
-      </a>
+      <ChatPhotoPreview v-if="isImageFile(part)" :url="fileHref(part)!" :name="part.filename ?? 'Attached image'" />
+      <audio
+        v-else-if="part.mediaType.startsWith('audio/') && fileHref(part)"
+        :src="fileHref(part)"
+        class="my-2 max-w-full"
+        controls
+        preload="none"
+        aria-label="Play voice note"
+      />
       <component
         :is="fileHref(part) ? 'a' : 'span'"
         v-else

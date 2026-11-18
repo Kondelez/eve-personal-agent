@@ -2,9 +2,11 @@ import { ForbiddenError, vercelOidc } from "eve/channels/auth";
 import { eveChannel } from "eve/channels/eve";
 import { getAccountChatSessionId } from "../../server/utils/account-chat";
 import { authenticateAccount } from "../lib/account-auth";
+import { fetchChatMedia } from "../lib/chat-media";
 
 export default eveChannel({
   turnPolicy: "queue",
+  fetchFile: fetchChatMedia,
   auth: [
     async (request) => {
       const account = await authenticateAccount(request);

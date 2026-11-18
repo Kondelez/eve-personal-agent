@@ -3,7 +3,10 @@ import { SessionNotActiveError } from "eve/sessions";
 import type { ChannelFrom, ChannelResolveSession } from "eve/channels";
 import type { Session } from "eve/sessions";
 import type { SessionStreamEvent } from "eve/client";
-import { transcriptOf } from "eve/client";
+import { conversationOf } from "eve/client";
+import { chatMediaId } from "../../shared/chat-media";
+import { ATTACHMENT_HISTORY_TEXT, historyIdWithFiles, historyMessageId } from "../../shared/types/account-chat";
+import type { HistoryFile } from "../../shared/types/account-chat";
 import type { buildAppSessionAuth } from "../../shared/app-auth";
 import { accountChatAddress, bindAccountChatSession, getAccountChatSessionId, getChatPhoneBinding, listChatHistorySources } from "../../server/utils/account-chat";
 
@@ -30,11 +33,48 @@ async function readHistory(session: Session, channel: "web" | "sms" = "web") {
     return [];
   }
 
-  return transcriptOf(events, { maxMessages: 80 }).messages.map((message, index) => ({
-    ...message,
-    id: `${channel}:${session.id}:${index}`,
-    text: message.text.slice(0, 4_000),
-  }));
+  const smsDeliveries = new Set<string>();
+  const smsTurns = new Set<string>();
+  for (const event of events) {
+    if (event.type === "delivery.admitted" && event.data.source
+      && "channel" in event.data.source && event.data.source.channel === "channel:sms") {
+      smsDeliveries.add(event.data.deliveryId);
+    }
+    if (event.type === "delivery.consumed" && smsDeliveries.delete(event.data.deliveryId)) {
+      smsTurns.add(event.data.turnId);
+    }
+  }
+
+  const messages = conversationOf(events).messages;
+  const voiceTranscripts = new Map<string, string>();
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "tool" || part.name !== "transcribe_voice_note" || part.state !== "completed") continue;
+      const id = (part.input as { id?: string } | undefined)?.id;
+      const transcript = (part.output as { transcript?: string } | undefined)?.transcript;
+      if (id && transcript) voiceTranscripts.set(id, transcript);
+    }
+  }
+
+  return messages.flatMap((message) => {
+    if (message.metadata?.status === "streaming") return [];
+    const text = message.parts.filter(part => part.type === "text").map(part => part.text).join("\n").trim();
+    const files = message.parts.flatMap((part): HistoryFile[] => {
+      if (part.type !== "file" || !part.url) return [];
+      const id = chatMediaId(part.url);
+      return id ? [{ id, filename: part.filename ?? "Attachment", mediaType: part.mediaType }] : [];
+    });
+    if (!text && !files.length) return [];
+    const voice = files.flatMap(file => {
+      const transcript = voiceTranscripts.get(file.id);
+      return transcript ? [`Voice note transcript: ${transcript}`] : [];
+    });
+    const messageText = [text, ...voice].filter(Boolean).join("\n\n");
+
+    const sms = channel === "sms" || Boolean(message.metadata?.turnId && smsTurns.has(message.metadata.turnId));
+    const id = message.metadata?.historyId ?? historyIdWithFiles(historyMessageId(session.id, message.id, sms), files);
+    return [{ id, role: message.role, text: messageText.slice(0, 4_000) || ATTACHMENT_HISTORY_TEXT }];
+  }).slice(-80);
 }
 
 async function earlierHistory(route: ChatRoute, userId: string, previous?: string) {

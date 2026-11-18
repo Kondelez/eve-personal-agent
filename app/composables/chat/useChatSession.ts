@@ -2,12 +2,15 @@ import type { EveMessage } from "eve/vue";
 import type { Answer } from "eve/events";
 import type { UIMessage } from "ai";
 import type { AccountChat } from "#shared/types/account-chat";
-import { draftContent } from "~/utils/chat/attachments";
+import { historyMessageId, readHistoryId } from "#shared/types/account-chat";
+import { chatMediaId, chatMediaReference } from "#shared/chat-media";
+import type { MessageContent } from "eve/client";
+import { draftContent, storeDraftFiles } from "~/utils/chat/attachments";
 import type { ChatDraft } from "~/utils/chat/attachments";
 import { clearAuthorizationChallenges, recordAuthorizationEvent } from "~/composables/chat/useAuthorizationChallenges";
 import { recordStreamEvent } from "~/composables/chat/stream-log";
 import { clearTurnFailure, isFailureEvent, recordTurnFailure, turnFailure } from "~/composables/chat/turn-errors";
-import { toUIMessages } from "~/utils/chat/eve";
+import { hydrateHistoryFiles, toUIMessages } from "~/utils/chat/eve";
 
 /** The four statuses the Nuxt UI chat components understand. */
 export type ChatStatus = "ready" | "submitted" | "streaming" | "error";
@@ -88,7 +91,7 @@ export function useChatSession(chat: AccountChat, recover: (draft: ChatDraft) =>
       id: message.id,
       role: message.role,
       metadata: { historyId: message.id },
-      parts: [{ type: "text", text: message.text }],
+      parts: hydrateHistoryFiles([{ type: "text", text: message.text }], message.id),
     }));
     if (!queued.value) return sent;
 
@@ -97,7 +100,9 @@ export function useChatSession(chat: AccountChat, recover: (draft: ChatDraft) =>
       role: "user",
       parts: [
         ...(queued.value.text ? [{ type: "text" as const, text: queued.value.text }] : []),
-        ...queued.value.attachments.map(({ filename, mediaType }) => ({ type: "file" as const, filename, mediaType, url: "" })),
+        ...queued.value.attachments.map(({ id, filename, mediaType }) => ({
+          type: "file" as const, filename, mediaType, url: chatMediaReference(id),
+        })),
       ],
     } as UIMessage];
   });
@@ -168,6 +173,7 @@ export function useChatSession(chat: AccountChat, recover: (draft: ChatDraft) =>
     if (!draft.text && !draft.attachments.length) return false;
 
     clearTurnFailure(chatId);
+    await storeDraftFiles(draft.attachments);
     await whenSendable(draft);
     return deliver(draft);
   }
@@ -201,9 +207,45 @@ export function useChatSession(chat: AccountChat, recover: (draft: ChatDraft) =>
     return Boolean((meta?.turnId && smsTurns.value.has(meta.turnId)) || meta?.historyId?.startsWith("sms:"));
   }
 
+  function messageKey(message: UIMessage) {
+    const meta = message.metadata as { historyId?: string } | undefined;
+    return meta?.historyId ? readHistoryId(meta.historyId).id : historyMessageId(chatId, message.id, isSms(message));
+  }
+
+  function originalPrompt(replyId: string) {
+    const index = messages.value.findIndex(message => message.id === replyId && message.role === "assistant");
+    if (index < 0) return;
+    return messages.value.slice(0, index).findLast(message => message.role === "user");
+  }
+
+  async function regenerate(replyId: string) {
+    if (isBusy.value) return;
+    const prompt = originalPrompt(replyId);
+    if (!prompt) throw new Error("The original message is unavailable.");
+
+    const content: MessageContent = prompt.parts.flatMap((part): Exclude<MessageContent, string>[number][] => {
+      if (part.type === "text") return [{ type: "text", text: part.text }];
+      if (part.type === "file" && chatMediaId(part.url)) {
+        return [{ type: "file", data: part.url, mediaType: part.mediaType, filename: part.filename }];
+      }
+      return [];
+    });
+    if (!content.length) throw new Error("The original message is unavailable.");
+
+    clearTurnFailure(chatId);
+    await whenSendable();
+    await agent.send(content, {
+      turnPolicy: "queue",
+      clientContext: "The user chose Regenerate on an earlier assistant reply. Give a fresh answer to the accompanying original message. Refer to existing tool results where useful. Do not repeat external actions or send communications that were already performed.",
+    });
+  }
+
   return {
     messages,
     isSms,
+    messageKey,
+    originalPrompt,
+    regenerate,
     status,
     error,
     isBusy,

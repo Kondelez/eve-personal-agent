@@ -6,6 +6,23 @@ import type { ChatDraft } from "~/utils/chat/attachments";
 const chat = shallowRef<AccountChat>();
 const messageToSend = shallowRef<ChatDraft>();
 const searchOpen = ref(false);
+const startOpen = ref(false);
+
+function openStart() {
+  searchOpen.value = false;
+  startOpen.value = true;
+}
+
+function openSearch() {
+  if (!chat.value || error.value) return;
+  startOpen.value = false;
+  searchOpen.value = !searchOpen.value;
+}
+
+defineShortcuts({
+  meta_k: { usingInput: true, handler: openSearch },
+  meta_o: { usingInput: true, handler: openStart },
+});
 const loading = ref(false);
 const error = ref(false);
 
@@ -56,6 +73,16 @@ onMounted(() => void openChat());
           </div>
         </template>
 
+        <UTooltip v-if="chat && !error" :text="startOpen ? 'Back to conversation' : 'Start screen'" :kbds="startOpen ? undefined : ['meta', 'O']">
+          <UButton
+            variant="ghost"
+            color="neutral"
+            :icon="startOpen ? 'i-lucide-messages-square' : 'i-lucide-house'"
+            :aria-label="startOpen ? 'Back to conversation' : 'Start screen'"
+            class="rounded-lg"
+            @click="startOpen ? startOpen = false : openStart()"
+          />
+        </UTooltip>
         <UButton
           v-if="chat && !error"
           type="button"
@@ -66,7 +93,7 @@ onMounted(() => void openChat());
           title="Find in conversation"
           :aria-expanded="searchOpen"
           class="rounded-lg"
-          @click="searchOpen = !searchOpen"
+          @click="openSearch"
         />
         <UButton
           to="/settings/profile"
@@ -89,6 +116,7 @@ onMounted(() => void openChat());
         v-else-if="chat"
         :key="chat.sessionId"
         v-model:search-open="searchOpen"
+        v-model:start-open="startOpen"
         :chat="chat"
         :pending-message="messageToSend"
         @recover="openChat"

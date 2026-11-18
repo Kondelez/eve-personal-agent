@@ -1,9 +1,8 @@
 import type { MessageContent } from "eve/client";
 
-export const MAX_CHAT_FILES = 5;
-// Inline data is base64 encoded in the JSON body. Keep room for the text and
-// metadata under the hosting platform's function request limit.
-export const MAX_CHAT_FILE_BYTES = 3_000_000;
+import { chatMediaReference } from "#shared/chat-media";
+
+export { MAX_CHAT_FILES, MAX_CHAT_FILE_BYTES } from "#shared/chat-media";
 export const MAX_CHAT_TEXT_LENGTH = 12_000;
 
 export const PHOTO_ACCEPT = "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif";
@@ -41,13 +40,26 @@ export function draftContent(draft: ChatDraft): MessageContent {
   if (!draft.attachments.length) return draft.text;
   return [
     ...(draft.text ? [{ type: "text" as const, text: draft.text }] : []),
-    ...draft.attachments.map(({ filename, mediaType, data }) => ({
+    ...draft.attachments.map(({ id, filename, mediaType }) => ({
       type: "file" as const,
       filename,
       mediaType,
-      data,
+      data: chatMediaReference(id),
     })),
   ];
+}
+
+
+export async function storeDraftFiles(attachments: readonly ChatAttachment[]) {
+  if (!attachments.length) return;
+  await $fetch("/api/chat/media", {
+    method: "POST",
+    body: {
+      files: attachments.map(({ id, filename, mediaType, data }) => ({
+        id, filename, mediaType, data: data.slice(data.indexOf(",") + 1),
+      })),
+    },
+  });
 }
 
 function asDataUrl(file: Blob) {

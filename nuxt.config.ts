@@ -24,6 +24,8 @@ export default defineNuxtConfig({
     "/api/profile/**": { headers: privateNoStore },
     "/api/threads": { headers: privateNoStore },
     "/api/threads/**": { headers: privateNoStore },
+    "/api/chat/**": { headers: privateNoStore },
+    "/api/transcription/**": { headers: privateNoStore },
     "/api/memory": { headers: privateNoStore },
     "/api/memory/**": { headers: privateNoStore },
     "/api/connectors": { headers: privateNoStore },
