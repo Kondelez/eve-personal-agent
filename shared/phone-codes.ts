@@ -36,30 +36,45 @@ export function parsePhoneNumber(value: string, defaultCountry = "FR") {
     return { countryCode: defaultCountry, local: "" };
   }
 
-  const normalized = trimmed.startsWith("+") ? trimmed : `+${trimmed.replace(/\D/g, "")}`;
+  const normalized = `+${trimmed.replace(/\D/g, "")}`;
+  const preferredCountry = findPhoneCode(defaultCountry);
+  if (preferredCountry && normalized.startsWith(preferredCountry.dialCode)) {
+    return { countryCode: defaultCountry, local: normalized.slice(preferredCountry.dialCode.length) };
+  }
   const byDialCode = [...PHONE_CODES].sort((a, b) => b.dialCode.length - a.dialCode.length);
 
   for (const country of byDialCode) {
     if (normalized.startsWith(country.dialCode)) {
       return {
         countryCode: country.code,
-        local: normalized.slice(country.dialCode.length).replace(/\D/g, ""),
+        local: normalized.slice(country.dialCode.length),
       };
     }
   }
 
   return {
     countryCode: defaultCountry,
-    local: normalized.replace(/\D/g, ""),
+    local: normalized,
   };
 }
 
-export function formatPhoneNumber(countryCode: string, local: string) {
+export function normalizePhoneNumberInput(value: string, countryCode: string) {
+  const input = value.trim();
+  if (!/^\+?[\d\s().-]+$/.test(input)) return input;
+
+  const digits = input.replace(/\D/g, "");
+  if (!digits) return input;
+  if (input.startsWith("+")) return `+${digits}`;
+  if (input.startsWith("00")) return `+${digits.slice(2)}`;
+
   const country = findPhoneCode(countryCode);
-  const digits = local.replace(/\D/g, "");
-  if (!country || !digits) {
-    return "";
-  }
+  if (!country) return input;
+  if (country.dialCode === "+1" && /^1\d{10}$/.test(digits)) return `+${digits}`;
 
   return `${country.dialCode}${digits}`;
+}
+
+export function isVerificationPhoneNumber(value: string) {
+  return /^\+[1-9]\d{7,14}$/.test(value)
+    && (!value.startsWith("+1") || /^\+1[2-9]\d{2}[2-9]\d{6}$/.test(value));
 }

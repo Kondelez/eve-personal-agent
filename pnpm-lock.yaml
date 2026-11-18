@@ -50,9 +50,6 @@ importers:
       eve:
         specifier: 1.0.0
         version: 1.0.0(@nuxt/kit@4.6.4(@nuxt/schema@4.6.4)(confbox@0.3.2)(dotenv@17.4.2)(giget@3.3.0)(jiti@2.7.0)(magic-string@1.4.5)(mlly@1.8.2)(rolldown@1.2.16)(unplugin@3.7.0(esbuild@0.28.2)(rolldown@1.2.16)(rollup@4.68.2)(vite@8.3.6(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.0)(yaml@2.9.0))))(@nuxt/schema@4.6.4)(@vercel/connect@2.9.3)(ai@7.0.173(zod@4.5.4))(react@19.2.6)(vite@8.3.6(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.45(typescript@6.0.3))
-      maska:
-        specifier: ^3.2.0
-        version: 3.2.0
       nuxt:
         specifier: ^4.6.4
         version: 4.6.4(468291e33f7585116df48d4c86bd78de)
@@ -5560,9 +5557,6 @@ packages:
     resolution: {integrity: sha512-gB0gkNafnonOw0obSTEGZTT86IuhILt2Wfx0mWH/1Au83kybTayroZ/V6nS25mN7u8ASy+5fMhgB3XPNrOZdmA==}
     engines: {node: '>= 20'}
     hasBin: true
-
-  maska@3.2.0:
-    resolution: {integrity: sha512-zSmSgs5/q9vMSmrdZT3rKOv9uLznNWR/niuuAdBZDTvB3SMKOX9vhMtDijFyExz+B4UClu2rvksylUh/ea1bLA==}
 
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
@@ -13178,8 +13172,6 @@ snapshots:
       uc.micro: 3.0.0
 
   marked@17.0.6: {}
-
-  maska@3.2.0: {}
 
   math-intrinsics@1.1.0: {}
 

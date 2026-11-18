@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { vMaska } from "maska/vue";
 import {
-  formatPhoneNumber,
+  isVerificationPhoneNumber,
+  normalizePhoneNumberInput,
   parsePhoneNumber,
   PHONE_CODES,
 } from "#shared/phone-codes";
@@ -18,52 +18,50 @@ const model = defineModel<string>({ default: "" });
 
 const countryCode = ref(props.defaultCountry);
 const localNumber = ref("");
-const syncing = ref(false);
 
 const country = computed(() => PHONE_CODES.find(entry => entry.code === countryCode.value));
 const dialCode = computed(() => country.value?.dialCode ?? "+33");
-const mask = computed(() => country.value?.mask ?? "# ## ## ## ##");
-const placeholder = computed(() => mask.value.replaceAll("#", "_"));
+const placeholder = computed(() => country.value?.mask.replaceAll("#", "_") ?? "Mobile number");
+const showDialCode = computed(() => !/^(?:\+|00)/.test(localNumber.value.trim()));
 
 function syncFromModel(value: string) {
-  syncing.value = true;
-  const parsed = parsePhoneNumber(value, props.defaultCountry);
-  countryCode.value = parsed.countryCode;
-  localNumber.value = parsed.local;
-  syncing.value = false;
-}
-
-function emitModel() {
-  if (syncing.value) {
+  if (!isVerificationPhoneNumber(value)) {
+    localNumber.value = value;
     return;
   }
-
-  model.value = formatPhoneNumber(countryCode.value, localNumber.value);
+  const parsed = parsePhoneNumber(value, countryCode.value);
+  countryCode.value = parsed.countryCode;
+  localNumber.value = parsed.local;
 }
 
-watch(() => model.value, (value) => {
-  const formatted = formatPhoneNumber(countryCode.value, localNumber.value);
-  if (value !== formatted) {
+function updateNumber(value: string) {
+  localNumber.value = value;
+  model.value = normalizePhoneNumberInput(value, countryCode.value);
+}
+
+function updateCountry(value: string) {
+  if (value === countryCode.value) return;
+  countryCode.value = value;
+  updateNumber("");
+}
+
+function commitNumber(event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) return;
+  updateNumber(event.target.value);
+  syncFromModel(model.value);
+}
+
+watch(model, (value) => {
+  if (value !== normalizePhoneNumberInput(localNumber.value, countryCode.value)) {
     syncFromModel(value);
   }
 }, { immediate: true });
-
-watch(countryCode, (next, previous) => {
-  if (syncing.value || next === previous) {
-    return;
-  }
-
-  localNumber.value = "";
-  emitModel();
-});
-
-watch(localNumber, emitModel);
 </script>
 
 <template>
   <UFieldGroup class="w-full">
     <USelectMenu
-      v-model="countryCode"
+      :model-value="countryCode"
       :items="PHONE_CODES"
       value-key="code"
       :search-input="{
@@ -80,6 +78,7 @@ watch(localNumber, emitModel);
         trailingIcon: 'size-4',
       }"
       trailing-icon="i-lucide-chevrons-up-down"
+      @update:model-value="updateCountry"
     >
       <span class="flex size-5 items-center text-lg">
         {{ country?.emoji ?? "🇫🇷" }}
@@ -97,22 +96,25 @@ watch(localNumber, emitModel);
     </USelectMenu>
 
     <UInput
-      :key="countryCode"
-      v-model="localNumber"
-      v-maska="mask"
+      :model-value="localNumber"
       type="tel"
       inputmode="tel"
-      autocomplete="tel-national"
+      autocomplete="tel"
+      name="tel"
+      aria-label="Mobile number"
       class="min-w-0 flex-1"
       :size="size"
       :placeholder="placeholder"
       :style="{ '--dial-code-length': `${dialCode.length + 1.5}ch` }"
       :ui="{
-        base: 'ps-(--dial-code-length) w-full',
+        base: showDialCode ? 'ps-(--dial-code-length) w-full' : 'w-full',
         leading: 'pointer-events-none text-base md:text-sm text-muted',
       }"
+      @update:model-value="updateNumber"
+      @change="commitNumber"
+      @blur="commitNumber"
     >
-      <template #leading>
+      <template v-if="showDialCode" #leading>
         {{ dialCode }}
       </template>
     </UInput>

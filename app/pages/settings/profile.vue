@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { authClient } from "~/lib/auth-client";
+import { isVerificationPhoneNumber } from "#shared/phone-codes";
 
 const { profile, pending, refresh, saveProfile, timezones, locales } = useProfile();
 
@@ -19,7 +20,7 @@ const codeSentTo = ref("");
 const phoneActionPending = ref(false);
 const phoneError = ref("");
 const isCurrentPhone = computed(() => form.phoneNumber === profile.value?.phoneNumber);
-const canSendCode = computed(() => /^\+[1-9]\d{7,14}$/.test(form.phoneNumber));
+const canSendCode = computed(() => isVerificationPhoneNumber(form.phoneNumber));
 
 const isDirty = computed(() => {
   if (!profile.value) return false;
@@ -83,6 +84,10 @@ async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms")
 
 async function handleSave() {
   if (saving.value || phoneActionPending.value || !isDirty.value) return;
+  if (form.phoneNumber && !isCurrentPhone.value && !canSendCode.value) {
+    phoneError.value = "Enter a complete mobile number.";
+    return;
+  }
 
   saving.value = true;
   try {
@@ -217,6 +222,7 @@ function resetForm() {
                     </UButton>
                   </div>
                 </template>
+                <p v-else-if="form.phoneNumber && !phoneError" class="text-sm text-muted">Enter a complete mobile number.</p>
                 <p v-if="phoneError" role="alert" class="text-sm text-error">{{ phoneError }}</p>
               </div>
             </SettingsRow>
