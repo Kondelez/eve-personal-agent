@@ -1,7 +1,13 @@
 import { defineAgent } from "eve";
+import { openai } from "eve/models/openai";
+
+if (!process.env.OPENAI_API_KEY && process.env.OPENAI_KEY) {
+  process.env.OPENAI_API_KEY = process.env.OPENAI_KEY;
+}
 
 export default defineAgent({
-  model: "anthropic/claude-sonnet-5",
+  model: openai("gpt-5.4-mini-2026-03-17"),
+  modelContextWindowTokens: 400_000,
   experimental: {
     workflow: {
       // The web app stores only a session id per thread and reloads the
@@ -10,15 +16,6 @@ export default defineAgent({
       // threads unreadable. Keep it for the World's default period instead.
       // Set to `0` to always delete on session end.
       retention: "default",
-    },
-  },
-  modelOptions: {
-    providerOptions: {
-      anthropic: {
-        // Claude 5 thinks adaptively on its own but omits the reasoning text
-        // by default, which would render as an empty "Thinking…" block.
-        thinking: { type: "adaptive", display: "summarized" },
-      },
     },
   },
 });
