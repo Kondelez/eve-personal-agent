@@ -7,6 +7,7 @@ export const userProfiles = pgTable("user_profiles", {
     .primaryKey()
     .references(() => user.id, { onDelete: "cascade" }),
   timezone: text("timezone").notNull().default("UTC"),
+  timezoneConfiguredAt: timestamp("timezone_configured_at"),
   locale: text("locale").notNull().default("en"),
   bio: text("bio").notNull().default(""),
   onboardingCompletedAt: timestamp("onboarding_completed_at"),

@@ -1,9 +1,8 @@
 import type { EveMessage } from "eve/vue";
 import type { Answer } from "eve/events";
 import type { UIMessage } from "ai";
-import type { ThreadRecord } from "#shared/types/thread";
+import type { AccountChat } from "#shared/types/account-chat";
 import { clearAuthorizationChallenges, recordAuthorizationEvent } from "~/composables/chat/useAuthorizationChallenges";
-import { persistThreadSession, resumeOptionsFromThread } from "~/composables/chat/thread-session";
 import { recordStreamEvent } from "~/composables/chat/stream-log";
 import { clearTurnFailure, isFailureEvent, recordTurnFailure, turnFailure } from "~/composables/chat/turn-errors";
 import { toUIMessages } from "~/utils/chat/eve";
@@ -40,41 +39,29 @@ function isSessionGone(error: unknown) {
   return code === "session_stranded" || code === "session_expired" || code === "session_not_active";
 }
 
-/**
- * Binds one durable eve session to one thread, for the lifetime of the page.
- *
- * `useEveAgent` attaches to the calling component's scope, so this must run in
- * setup and the agent must not outlive it — the thread's stored session id is
- * what carries the conversation across visits.
- */
-export function useChatSession(thread: ThreadRecord) {
-  const chatId = thread.id;
-  const initial = resumeOptionsFromThread(thread);
+/** Connect Nuxt's chat components to the account's shared Eve session. */
+export function useChatSession(chat: AccountChat, recover: (text: string) => void) {
+  const chatId = chat.sessionId;
+  const smsDeliveries = new Set<string>();
+  const smsTurns = shallowRef(new Set<string>());
 
-  // `onSessionChange` fires on every cursor advance, and `thread` is a
-  // snapshot that never learns the id, so track what has been bound here.
-  let boundSessionId = thread.sessionId;
-
-  // Sign-in cards are shared module state; drop what another thread left
-  // behind. This thread's own replay rebuilds whatever is still pending.
   clearAuthorizationChallenges();
 
   const agent = useEveAgent({
-    ...initial,
-    onSessionChange: (session) => {
-      // eve mints the session on the first message; bind it once.
-      if (session && session.sessionId !== boundSessionId) {
-        const previous = boundSessionId;
-        boundSessionId = session.sessionId;
-        persistThreadSession(chatId, session.sessionId).catch(() => {
-          // Let the next cursor advance try again rather than lose the binding.
-          if (boundSessionId === session.sessionId) boundSessionId = previous;
-        });
-      }
-    },
+    initialSession: { sessionId: chatId, streamIndex: 0 },
+    resume: true,
     // Fires for replayed events too, so state derived here rebuilds on reload.
     onEvent: (event) => {
       recordAuthorizationEvent(event);
+
+      if (event.type === "delivery.admitted" && event.data.source
+        && "channel" in event.data.source && event.data.source.channel === "channel:sms") {
+        smsDeliveries.add(event.data.deliveryId);
+      }
+      if (event.type === "delivery.consumed" && smsDeliveries.delete(event.data.deliveryId)) {
+        smsTurns.value = new Set([...smsTurns.value, event.data.turnId]);
+      }
+      if (event.type === "delivery.settled") smsDeliveries.delete(event.data.deliveryId);
 
       // A later turn supersedes an earlier failure, live or replayed.
       if (event.type === "turn.started") clearTurnFailure(chatId);
@@ -93,7 +80,13 @@ export function useChatSession(thread: ThreadRecord) {
   const queued = ref<string>();
 
   const messages = computed(() => {
-    const sent = toUIMessages(agent.messages.value);
+    const replayed = toUIMessages(agent.messages.value);
+    const sent: UIMessage[] = replayed.length ? replayed : chat.history.map(message => ({
+      id: message.id,
+      role: message.role,
+      metadata: { historyId: message.id },
+      parts: [{ type: "text", text: message.text }],
+    }));
     if (!queued.value) return sent;
 
     return [...sent, {
@@ -152,18 +145,15 @@ export function useChatSession(thread: ThreadRecord) {
     }
   }
 
-  /**
-   * Sends to the thread's session, or to a fresh one when that session is
-   * gone. `onSessionChange` then rebinds the thread to the new session.
-   */
   async function deliver(text: string) {
     try {
       await agent.send(text);
+      return true;
     }
     catch (error) {
       if (!isSessionGone(error)) throw error;
-      agent.newSession();
-      await agent.send(text);
+      recover(text);
+      return false;
     }
   }
 
@@ -173,7 +163,7 @@ export function useChatSession(thread: ThreadRecord) {
 
     clearTurnFailure(chatId);
     await whenSendable(trimmed);
-    await deliver(trimmed);
+    return deliver(trimmed);
   }
 
   async function respond(answers: readonly Answer[]) {
@@ -199,8 +189,14 @@ export function useChatSession(thread: ThreadRecord) {
     await deliver(text);
   }
 
+  function isSms(message: UIMessage) {
+    const meta = message.metadata as { turnId?: string; historyId?: string } | undefined;
+    return Boolean((meta?.turnId && smsTurns.value.has(meta.turnId)) || meta?.historyId?.startsWith("sms:"));
+  }
+
   return {
     messages,
+    isSms,
     status,
     error,
     isBusy,

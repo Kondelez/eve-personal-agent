@@ -1,114 +1,63 @@
 <script setup lang="ts">
-import { startChat } from "~/composables/chat/navigation";
+import { ACCOUNT_CHAT_PATH } from "#shared/types/account-chat";
+import type { AccountChat } from "#shared/types/account-chat";
 
-const input = ref("");
+const chat = shallowRef<AccountChat>();
+const messageToSend = ref<string>();
+const loading = ref(false);
+const error = ref(false);
 
-const greeting = computed(() => {
-  const hour = new Date().getHours();
-  let timeGreeting = "Good evening";
-  if (hour < 12) timeGreeting = "Good morning";
-  else if (hour < 18) timeGreeting = "Good afternoon";
-
-  return timeGreeting;
-});
-
-function createChat(prompt: string) {
-  const text = prompt.trim();
-  if (!text) return;
-  input.value = "";
-  void startChat(text);
+async function openChat(text?: string) {
+  if (loading.value) return;
+  if (text) messageToSend.value = text;
+  loading.value = true;
+  error.value = false;
+  try {
+    const next = await $fetch<AccountChat>(ACCOUNT_CHAT_PATH, {
+      method: "POST",
+      body: {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        closedSessionId: text ? chat.value?.sessionId : undefined,
+      },
+    });
+    if (text && next.sessionId === chat.value?.sessionId) {
+      error.value = true;
+      return;
+    }
+    messageToSend.value = text;
+    chat.value = next;
+  }
+  catch {
+    error.value = true;
+  }
+  finally {
+    loading.value = false;
+  }
 }
 
-function onSubmit() {
-  createChat(input.value);
-}
-
-function summarizeDay() {
-  void startChat("Summarize my day using the daily-summary skill.");
-}
-
-const quickChats = [
-  {
-    label: "Who are you?",
-    icon: "i-lucide-user-round",
-    action: () => createChat("Who are you?"),
-  },
-  {
-    label: "What can you help me with?",
-    icon: "i-lucide-message-circle-question",
-    action: () => createChat("What can you help me with?"),
-  },
-  {
-    label: "What is the weather in Paris?",
-    icon: "i-lucide-sun",
-    action: () => createChat("What is the weather in Paris?"),
-  },
-  {
-    label: "What do you remember about me?",
-    icon: "i-lucide-brain",
-    action: () => createChat("What do you remember about me?"),
-  },
-  {
-    label: "Summarize my day",
-    icon: "i-lucide-calendar-days",
-    action: summarizeDay,
-  },
-];
+onMounted(() => void openChat());
 </script>
 
 <template>
-  <UDashboardPanel
-    id="home"
-    class="min-h-0"
-    :ui="{ body: 'p-0 sm:p-0' }"
-  >
+  <UDashboardPanel id="chat" class="min-h-0" :ui="{ body: 'p-0 sm:p-0 overflow-hidden gap-0' }">
     <template #header>
       <AppNavbar />
     </template>
 
     <template #body>
-      <div class="hero-glow flex flex-1">
-        <UContainer class="flex flex-1 flex-col justify-center gap-4 py-8 sm:gap-6">
-          <div class="space-y-1">
-            <h1 class="text-3xl font-bold text-highlighted sm:text-4xl">
-              {{ greeting }}
-            </h1>
-            <p class="text-sm text-muted sm:text-base">
-              V — your personal agent
-            </p>
-          </div>
-
-          <UChatPrompt
-            v-model="input"
-            class="[view-transition-name:chat-prompt]"
-            variant="subtle"
-            :ui="{ base: 'px-1.5' }"
-            @submit="onSubmit"
-          >
-            <template #footer>
-              <UChatPromptSubmit
-                class="ms-auto shrink-0"
-                color="neutral"
-                size="sm"
-              />
-            </template>
-          </UChatPrompt>
-
-          <div class="flex flex-wrap gap-2">
-            <UButton
-              v-for="quickChat in quickChats"
-              :key="quickChat.label"
-              :icon="quickChat.icon"
-              :label="quickChat.label"
-              size="sm"
-              color="neutral"
-              variant="outline"
-              class="rounded-full"
-              @click="quickChat.action()"
-            />
-          </div>
-        </UContainer>
+      <div v-if="error" class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 text-sm">
+        <p role="alert">Could not open your conversation.</p>
+        <UButton color="neutral" variant="outline" @click="openChat(messageToSend)">Try again</UButton>
       </div>
+      <ChatConversation
+        v-else-if="chat"
+        :key="chat.sessionId"
+        :chat="chat"
+        :pending-message="messageToSend"
+        @recover="openChat"
+        @sent="messageToSend = undefined"
+      />
+      <p v-else class="m-auto text-sm text-muted" role="status">Loading chat…</p>
     </template>
   </UDashboardPanel>
 </template>

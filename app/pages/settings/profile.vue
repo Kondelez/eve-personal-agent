@@ -3,12 +3,11 @@ import { authClient } from "~/lib/auth-client";
 import { isVerificationPhoneNumber } from "#shared/phone-codes";
 import type { UserProfilePatch } from "#shared/types/profile";
 
-const { profile, pending, refresh, saveProfile, timezones, locales } = useProfile();
+const { profile, pending, refresh, saveProfile, locales } = useProfile();
 
 const form = reactive({
   name: "",
   phoneNumber: "",
-  timezone: "UTC",
   locale: "en",
   bio: "",
 });
@@ -36,7 +35,6 @@ const pendingEdits = computed<UserProfilePatch>(() => {
   const bio = form.bio.trim();
   if (name && name !== current.name) patch.name = name;
   if (bio !== current.bio) patch.bio = bio;
-  if (form.timezone !== current.timezone) patch.timezone = form.timezone;
   if (form.locale !== current.locale) patch.locale = form.locale;
   return patch;
 });
@@ -46,7 +44,6 @@ watch(profile, (value) => {
   loadedUserId = value.userId;
   form.name = value.name;
   form.phoneNumber = value.phoneNumber ?? "";
-  form.timezone = value.timezone;
   form.locale = value.locale;
   form.bio = value.bio;
 }, { immediate: true });
@@ -57,7 +54,7 @@ function scheduleSave() {
   saveTimer = setTimeout(saveChanges, 450);
 }
 
-watch([() => form.name, () => form.bio, () => form.timezone, () => form.locale], () => {
+watch([() => form.name, () => form.bio, () => form.locale], () => {
   saveFailed.value = false;
   scheduleSave();
 });
@@ -278,25 +275,6 @@ async function submitPhoneAction(action: "send-code" | "verify" | "disable-sms")
             title="Preferences"
             description="Locale and regional settings."
           >
-            <SettingsRow
-              inline
-              label="Timezone"
-              description="Used for schedules and time-aware replies."
-            >
-              <UInputMenu
-                v-model="form.timezone"
-                :items="timezones"
-                value-key="value"
-                label-key="label"
-                description-key="description"
-                :filter-fields="['label', 'value', 'description']"
-                placeholder="Search timezone…"
-                icon="i-lucide-globe"
-                class="w-48"
-                :ui="{ content: 'min-w-(--reka-combobox-trigger-width)' }"
-              />
-            </SettingsRow>
-
             <SettingsRow
               inline
               label="Language"

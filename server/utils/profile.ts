@@ -91,7 +91,12 @@ export async function updateProfileForUser(userId: string, patch: UserProfilePat
 
     if (patch.timezone !== undefined || patch.locale !== undefined || patch.bio !== undefined) {
       await transaction.update(schema.userProfiles)
-        .set({ timezone: patch.timezone, locale: patch.locale, bio: patch.bio })
+        .set({
+          timezone: patch.timezone,
+          timezoneConfiguredAt: patch.timezone === undefined ? undefined : new Date(),
+          locale: patch.locale,
+          bio: patch.bio,
+        })
         .where(eq(schema.userProfiles.userId, userId));
     }
   });

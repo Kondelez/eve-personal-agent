@@ -1,26 +1,43 @@
 import { defineChannel, POST } from "eve/channels";
+import { routeAuth } from "eve/channels/auth";
 import twilio from "twilio";
 import { buildAppSessionAuth } from "../../shared/app-auth.js";
+import { ACCOUNT_CHAT_PATH } from "../../shared/types/account-chat";
+import { setDetectedTimezone } from "../../server/utils/profile-timezone";
+import { authenticateAccount } from "../lib/account-auth";
+import { isClosedChat, openAccountChat } from "../lib/account-chat";
 import { fetchPhoneLink } from "../lib/phone-internal.js";
+import { sendSmsReply } from "../lib/sms-reply";
 
 const SMS_PATH = "/eve/v1/twilio/messages";
 const E164 = /^\+[1-9]\d{7,14}$/;
 const CARRIER_KEYWORD = /^(stop|stopall|unsubscribe|cancel|end|quit|start|unstop|help|info)$/i;
 
-type SmsState = {
-  phoneNumber: string;
-  appUserId: string;
-  verifiedAt: string;
-};
-
 export default defineChannel({
-  state: null as SmsState | null,
   audience: () => "private",
   turnPolicy: "queue",
-  context: state => ({ sms: state }),
 
   routes: [
-    POST<SmsState | null>(SMS_PATH, async (request, { from }) => {
+    POST(ACCOUNT_CHAT_PATH, async (request, route) => {
+      const auth = await routeAuth(request, authenticateAccount);
+      if (auth instanceof Response) return auth;
+
+      if (request.headers.get("content-type")?.split(";")[0] !== "application/json") {
+        return new Response("Expected JSON", { status: 415 });
+      }
+      const body = await request.json().catch(() => null) as { timezone?: unknown; closedSessionId?: unknown } | null;
+      if (typeof body?.timezone === "string" && body.timezone.length <= 64) {
+        await setDetectedTimezone(auth.principalId, body.timezone);
+      }
+
+      const { sessionId, history } = await openAccountChat(route, auth, {
+        preview: true,
+        closedSessionId: typeof body?.closedSessionId === "string" ? body.closedSessionId : undefined,
+      });
+      return Response.json({ sessionId, history }, { headers: { "cache-control": "private, no-store" } });
+    }),
+
+    POST(SMS_PATH, async (request, route) => {
       const token = process.env.TWILIO_AUTH_TOKEN;
       const origin = process.env.BETTER_AUTH_CUSTOM_URL;
       const signature = request.headers.get("x-twilio-signature");
@@ -44,37 +61,33 @@ export default defineChannel({
       const link = await fetchPhoneLink(params.From, "sms");
       if (!link?.verifiedAt) return new Response(null, { status: 204 });
 
-      const sms = { phoneNumber: link.phoneNumber, appUserId: link.appUserId, verifiedAt: link.verifiedAt };
-      // Include the account and binding version so re-linking starts a fresh SMS thread.
-      const address = JSON.stringify([sms.appUserId, sms.phoneNumber, sms.verifiedAt]);
-      await from(address).send(text, {
-        auth: buildAppSessionAuth(sms.appUserId, { phone_number: sms.phoneNumber }),
-        idempotencyKey: params.MessageSid,
-        title: "SMS",
-        state: sms,
-      });
+      const auth = buildAppSessionAuth(link.appUserId, {});
+      const { session } = await openAccountChat(route, auth);
+      const options = {
+        auth: {
+          ...auth,
+          attributes: { sms_recipient: link.phoneNumber, sms_binding: link.verifiedAt },
+        },
+        idempotencyKey: `twilio:${params.MessageSid}`,
+        turnPolicy: "queue" as const,
+      };
+      try {
+        await session.send(text, options);
+      }
+      catch (error) {
+        if (!isClosedChat(error)) throw error;
+        const { session: recovered } = await openAccountChat(route, auth, { closedSessionId: session.id });
+        await recovered.send(text, options);
+      }
       return new Response(null, { status: 204 });
     }),
   ],
 
   events: {
     async "content.completed"(event, ctx) {
-      if (event.data.phase !== "reply" || typeof event.data.value !== "string") return;
-      const sms = ctx.channel.sms;
-      const accountSid = process.env.TWILIO_ACCOUNT_SID;
-      const token = process.env.TWILIO_AUTH_TOKEN;
-      const number = process.env.EVE_SMS_NUMBER;
-      const messagingServiceSid = process.env.EVE_SMS_MESSAGING_SERVICE_SID;
-      if (!sms || !accountSid || !token || !number || !messagingServiceSid || process.env.EVE_SMS_ENABLED !== "true") return;
-
-      // Consent or ownership may have changed during the turn.
-      const link = await fetchPhoneLink(sms.phoneNumber, "sms");
-      if (link?.appUserId !== sms.appUserId || link.verifiedAt !== sms.verifiedAt) return;
-
-      const text = event.data.value.trim();
-      if (!text) return;
-      const body = text.length > 1500 ? `${text.slice(0, 1499).trimEnd()}…` : text;
-      await twilio(accountSid, token).messages.create({ from: number, to: sms.phoneNumber, messagingServiceSid, body });
+      if (event.data.phase === "reply" && typeof event.data.value === "string") {
+        await sendSmsReply(ctx.session.auth.current, event.data.value);
+      }
     },
   },
 });

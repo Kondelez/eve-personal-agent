@@ -1,39 +1,24 @@
-import type { AuthFn } from "eve/channels/auth";
-import { eveChannel } from "eve/channels/eve";
 import { ForbiddenError, vercelOidc } from "eve/channels/auth";
-import { auth } from "../../auth";
-import { getOnboardingProfile } from "../../server/utils/onboarding";
-
-function appSession(): AuthFn<Request> {
-  return async (request) => {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session?.user) {
-      return null;
-    }
-
-    if (!(await getOnboardingProfile(session.user.id))?.complete) {
-      throw new ForbiddenError({ message: "Complete your profile to open Eve." });
-    }
-
-    return {
-      attributes: {
-        email: session.user.email,
-        name: session.user.name,
-      },
-      authenticator: "app",
-      issuer: "app",
-      principalId: session.user.id,
-      principalType: "user",
-    };
-  };
-}
+import { eveChannel } from "eve/channels/eve";
+import { getAccountChatSessionId } from "../../server/utils/account-chat";
+import { authenticateAccount } from "../lib/account-auth";
 
 export default eveChannel({
+  turnPolicy: "queue",
   auth: [
-    appSession(),
+    async (request) => {
+      const account = await authenticateAccount(request);
+      if (!account) return null;
+
+      // The browser can read and control only its own conversation. Session
+      // creation happens at the shared continuation address in sms.ts.
+      const path = new URL(request.url).pathname;
+      const sessionId = /^\/eve\/v1\/session\/([^/]+)(?:\/|$)/.exec(path)?.[1];
+      if (!sessionId || sessionId !== await getAccountChatSessionId(account.principalId)) {
+        throw new ForbiddenError({ message: "Open your Eve conversation first." });
+      }
+      return account;
+    },
     vercelOidc(),
   ],
 });
