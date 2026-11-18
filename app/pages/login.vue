@@ -9,6 +9,7 @@ useSeoMeta({ title: "Sign in to Eve" });
 const route = useRoute();
 const stage = ref<"identify" | "email-sent" | "phone-code" | "password">("identify");
 const identifier = ref("");
+const identifierInput = useTemplateRef("identifierInput");
 const destination = ref("");
 const attempt = ref("");
 const code = ref("");
@@ -60,6 +61,9 @@ async function sendPhoneCode(phoneNumber: string) {
 
 async function handleSubmit(resend = false) {
   if (loading.value) return;
+  // Autofill can update the native field without firing a Vue model update.
+  const value = (identifierInput.value?.inputRef?.value ?? identifier.value).trim();
+  identifier.value = value;
   error.value = "";
   showLinkError.value = false;
   loading.value = true;
@@ -78,22 +82,23 @@ async function handleSubmit(resend = false) {
       await navigateTo(redirectTo.value);
     }
     else if (stage.value === "password") {
-      const result = await authClient.signIn.email({ email: identifier.value.trim(), password: password.value });
+      const result = await authClient.signIn.email({ email: value, password: password.value });
       if (result.error) {
         error.value = result.error.message ?? "Could not sign in.";
         return;
       }
       await navigateTo(redirectTo.value);
     }
+    else if (value.includes("@")) {
+      await sendEmailLink(value.toLowerCase());
+    }
     else {
-      const value = identifier.value.trim();
-      if (value.includes("@")) {
-        await sendEmailLink(value.toLowerCase());
-        return;
-      }
       const phoneNumber = normalizePhoneNumberInput(value, "US");
       if (!isVerificationPhoneNumber(phoneNumber)) {
-        error.value = "Enter an email address or a complete mobile number.";
+        const nationalDigits = /^\+1(\d+)$/.exec(phoneNumber)?.[1];
+        error.value = nationalDigits && nationalDigits.length !== 10
+          ? `This number has ${nationalDigits.length} digits after +1. Enter 10 digits, with or without +1.`
+          : "Enter an email address or a complete mobile number.";
         return;
       }
       await sendPhoneCode(phoneNumber);
@@ -129,14 +134,17 @@ async function handleSubmit(resend = false) {
             :label="stage === 'password' ? 'Email' : 'Email or mobile number'"
           >
             <UInput
+              ref="identifierInput"
               v-model="identifier"
               class="w-full"
               :type="stage === 'password' ? 'email' : 'text'"
+              name="identifier"
               autocomplete="username"
               autocapitalize="none"
+              autocorrect="off"
               :spellcheck="false"
               required
-              :placeholder="stage === 'password' ? 'you@example.com' : 'you@example.com or +1 202 555 0147'"
+              :placeholder="stage === 'password' ? 'you@example.com' : 'you@example.com or 917 555 0147'"
             />
           </UFormField>
 
