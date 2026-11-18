@@ -24,7 +24,7 @@ export async function reserveSignInDelivery(channel: "email" | "phone", address:
           target: table.id,
           set: {
             value: sql<string>`case when ${expired} then '1' else (${table.value}::integer + 1)::text end`,
-            expiresAt: sql<Date>`case when ${expired} then ${expiresAt} else ${table.expiresAt} end`,
+            expiresAt: sql<Date>`case when ${expired} then excluded.expires_at else ${table.expiresAt} end`,
           },
           setWhere: or(expired, sql`${table.value}::integer < ${max}`),
         })
