@@ -161,9 +161,9 @@ function removeAttachment(id: string) {
 }
 
 const starters = [
-  { label: "Plan my day", icon: "i-lucide-calendar-days", prompt: "Help me plan my day." },
-  { label: "Draft a message", icon: "i-lucide-pen-line", prompt: "Help me draft a message." },
-  { label: "What do you know about me?", icon: "i-lucide-user-round", prompt: "What do you know about me?" },
+  { label: "Plan my day", detail: "Prioritize tasks and make a schedule.", icon: "i-lucide-calendar-days", prompt: "Help me plan my day." },
+  { label: "Draft a message", detail: "Write a text, email, or note.", icon: "i-lucide-pen-line", prompt: "Help me draft a message." },
+  { label: "Review what Eve remembers", detail: "Check saved details and preferences.", icon: "i-lucide-user-round", prompt: "What do you know about me?" },
 ];
 
 function insertTranscript(text: string) {
@@ -285,7 +285,8 @@ async function copyMessage(message: UIMessage) {
   }
 }
 
-type ChatVote = 1 | -1;
+const voteOptions = [1, -1] as const;
+type ChatVote = typeof voteOptions[number];
 const { data: initialVotes, error: votesError } = useFetch<{ votes: { messageId: string; vote: ChatVote }[] }>("/api/chat/votes", {
   server: false,
 });
@@ -384,7 +385,7 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
 
 <template>
   <div
-    class="relative flex min-h-0 flex-1 flex-col bg-default"
+    class="eve-chat relative flex min-h-0 min-w-0 flex-1 flex-col"
     @dragenter="onDragEnter"
     @dragleave="onDragLeave"
     @dragover="onDragOver"
@@ -392,7 +393,7 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
   >
     <div
       v-if="draggingFiles"
-      class="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-teal-600 bg-default/90"
+      class="pointer-events-none absolute inset-3 z-50 grid place-items-center rounded-3xl border-2 border-dashed border-(--eve-accent) bg-default/95"
       aria-hidden="true"
     >
       <span class="flex items-center gap-2 font-medium">
@@ -400,8 +401,8 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
         Drop files to attach
       </span>
     </div>
-    <div v-if="searchOpen && !startOpen" class="shrink-0 border-b border-default bg-default px-4 py-2.5 sm:px-8">
-      <form class="mx-auto flex w-full max-w-2xl items-center gap-1.5" role="search" @submit.prevent="stepMatch(1)" @keydown.esc="searchOpen = false">
+    <div v-if="searchOpen && !startOpen" class="shrink-0 border-b border-(--eve-line) bg-default px-3 py-2.5 sm:px-8">
+      <form class="mx-auto flex w-full max-w-3xl items-center gap-1" role="search" @submit.prevent="stepMatch(1)" @keydown.esc="searchOpen = false">
         <UInput
           ref="finder"
           v-model="search"
@@ -410,6 +411,7 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
           placeholder="Find in conversation"
           aria-label="Find in conversation"
           class="min-w-0 flex-1"
+          :ui="{ base: 'rounded-xl' }"
         />
         <span v-if="search.trim()" aria-live="polite" class="shrink-0 px-1 text-xs text-muted">
           {{ matches.length ? `${matchIndex + 1} of ${matches.length}` : 'No matches' }}
@@ -429,28 +431,30 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
         auto-scroll="pin-to-bottom"
       >
         <template #message-view>
-          <div v-if="!startOpen && (visibleMessages.length || isBusy)" class="space-y-2 px-1 pb-4 pt-2 sm:px-6">
+          <div v-if="!startOpen && (visibleMessages.length || isBusy)" class="space-y-5 py-5 sm:space-y-7 sm:px-5 sm:py-8">
             <component
               :is="renderer"
               v-for="{ original: message, preview, renderer } in visibleMessages"
               :key="message.id"
               :message="preview"
+              class="chat-turn"
+              :class="preview.role === 'user' ? 'chat-turn-user' : 'chat-turn-assistant'"
             >
               <template #message-renderer>
                 <div
-                  class="min-w-0 text-base"
-                  :class="[
-                    preview.role === 'user' ? 'max-w-[86%] rounded-2xl bg-muted px-4 py-2.5 sm:max-w-[78%]' : 'py-2',
-                    activeMatch === message.id ? 'rounded-lg ring-2 ring-amber-500 ring-offset-4' : '',
-                  ]"
+                  class="chat-message min-w-0 wrap-anywhere"
+                  :class="{ 'is-search-match': activeMatch === message.id }"
                 >
-                  <p
-                    v-if="isSms(message)"
-                    class="mb-1 flex items-center gap-1 text-xs font-medium text-muted"
-                  >
-                    <UIcon name="i-lucide-smartphone" class="size-3.5" />
-                    SMS
-                  </p>
+                  <div v-if="preview.role === 'assistant' || isSms(message)" class="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted">
+                    <span v-if="preview.role === 'assistant'" class="eve-avatar size-6 rounded-lg">
+                      <AppLogo class="h-2.5 w-auto" />
+                    </span>
+                    <span v-if="preview.role === 'assistant'" class="font-semibold text-highlighted">Eve</span>
+                    <span v-if="isSms(message)" class="inline-flex items-center gap-1 rounded-full bg-default/70 px-2 py-0.5 dark:bg-default/45">
+                      <UIcon name="i-lucide-smartphone" class="size-3" />
+                      SMS
+                    </span>
+                  </div>
                   <ChatMessageContentEve
                     :message="message"
                     :status="status"
@@ -458,83 +462,111 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
                     :can-respond="!isBusy"
                     @input-responses="handleInputResponses"
                   />
-                  <div
-                    v-if="textOf(message) && (message.id !== messages.at(-1)?.id || !isBusy)"
-                    class="mt-1 flex flex-wrap items-center gap-0.5"
-                    aria-label="Message actions"
-                  >
-                    <UTooltip :text="copied === message.id ? 'Copied' : 'Copy message'">
+                </div>
+                <div
+                  v-if="preview.content && (message.id !== messages.at(-1)?.id || !isBusy)"
+                  class="chat-actions flex flex-wrap items-center gap-0.5"
+                  :class="{ 'justify-end': preview.role === 'user' }"
+                  role="group"
+                  aria-label="Message actions"
+                >
+                  <UTooltip :text="copied === message.id ? 'Copied' : 'Copy message'">
+                    <UButton
+                      type="button"
+                      variant="ghost"
+                      color="neutral"
+                      size="sm"
+                      :icon="copied === message.id ? 'i-lucide-check' : 'i-lucide-copy'"
+                      :aria-label="copied === message.id ? 'Copied' : 'Copy message'"
+                      class="rounded-lg text-muted"
+                      @click="copyMessage(message)"
+                    />
+                  </UTooltip>
+                  <template v-if="message.role === 'assistant'">
+                    <UTooltip v-for="vote in voteOptions" :key="vote" :text="vote === 1 ? 'Good reply' : 'Bad reply'">
+                      <UButton
+                        type="button"
+                        size="sm"
+                        :variant="votes[messageKey(message)] === vote ? 'soft' : 'ghost'"
+                        :color="votes[messageKey(message)] === vote ? (vote === 1 ? 'success' : 'error') : 'neutral'"
+                        :icon="vote === 1 ? 'i-lucide-thumbs-up' : 'i-lucide-thumbs-down'"
+                        :aria-label="vote === 1 ? 'Good reply' : 'Bad reply'"
+                        :aria-pressed="votes[messageKey(message)] === vote"
+                        :disabled="!!votesError || votePending.has(messageKey(message))"
+                        class="rounded-lg"
+                        @click="voteFor(message, vote)"
+                      />
+                    </UTooltip>
+                    <UTooltip v-if="canRegenerate(message)" text="Regenerate as a new reply">
                       <UButton
                         type="button"
                         variant="ghost"
                         color="neutral"
-                        size="xs"
-                        :icon="copied === message.id ? 'i-lucide-check' : 'i-lucide-copy'"
-                        :aria-label="copied === message.id ? 'Copied' : 'Copy message'"
-                        class="text-muted"
-                        @click="copyMessage(message)"
+                        size="sm"
+                        icon="i-lucide-rotate-cw"
+                        aria-label="Regenerate reply"
+                        :loading="regenerating === message.id"
+                        :disabled="isBusy || !!regenerating || submitting || dictating"
+                        class="rounded-lg text-muted"
+                        @click="regenerateReply(message)"
                       />
                     </UTooltip>
-                    <template v-if="message.role === 'assistant'">
-                      <UTooltip v-for="vote in ([1, -1] as const)" :key="vote" :text="vote === 1 ? 'Good reply' : 'Bad reply'">
-                        <UButton
-                          type="button"
-                          size="xs"
-                          :variant="votes[messageKey(message)] === vote ? 'soft' : 'ghost'"
-                          :color="votes[messageKey(message)] === vote ? (vote === 1 ? 'success' : 'error') : 'neutral'"
-                          :icon="vote === 1 ? 'i-lucide-thumbs-up' : 'i-lucide-thumbs-down'"
-                          :aria-label="vote === 1 ? 'Good reply' : 'Bad reply'"
-                          :aria-pressed="votes[messageKey(message)] === vote"
-                          :disabled="!!votesError || votePending.has(messageKey(message))"
-                          @click="voteFor(message, vote)"
-                        />
-                      </UTooltip>
-                      <UTooltip v-if="canRegenerate(message)" text="Regenerate as a new reply">
-                        <UButton
-                          type="button"
-                          variant="ghost"
-                          color="neutral"
-                          size="xs"
-                          icon="i-lucide-rotate-cw"
-                          aria-label="Regenerate reply"
-                          :loading="regenerating === message.id"
-                          :disabled="isBusy || !!regenerating || submitting || dictating"
-                          @click="regenerateReply(message)"
-                        />
-                      </UTooltip>
-                    </template>
-              </div>
-            </div>
+                  </template>
+                </div>
               </template>
               <template #toolbar />
               <template #tool-calls-view />
             </component>
-            <ChatActivityIndicator v-if="isBusy && visibleMessages.at(-1)?.preview.role !== 'assistant'" class="pt-3" />
+            <ChatActivityIndicator v-if="isBusy && visibleMessages.at(-1)?.preview.role !== 'assistant'" class="px-1 pt-1" />
           </div>
-          <div v-else class="mx-auto w-full max-w-lg px-1 pb-10 pt-[min(20vh,8rem)] text-center">
-            <span class="mx-auto grid size-12 place-items-center rounded-2xl bg-inverted text-inverted">
-              <AppLogo class="h-5 w-auto" />
+          <section v-else class="chat-welcome mx-auto px-1 pb-8 text-center sm:px-5" aria-labelledby="chat-welcome-title">
+            <span class="eve-avatar mx-auto size-14 rounded-[1.2rem] shadow-sm sm:size-16">
+              <AppLogo class="h-5 w-auto sm:h-6" />
             </span>
-            <h1 class="mt-5 text-3xl font-semibold tracking-tight text-highlighted sm:text-4xl">{{ greeting }}</h1>
-            <div class="mt-6 flex flex-wrap justify-center gap-2">
-              <UButton
+            <h1 id="chat-welcome-title" class="mt-4 text-3xl font-semibold tracking-[-0.045em] text-highlighted sm:mt-5 sm:text-5xl">
+              {{ greeting }}
+            </h1>
+            <div class="mx-auto mt-5 grid max-w-2xl gap-2 text-left sm:mt-8 sm:grid-cols-3 sm:gap-3">
+              <button
                 v-for="starter in starters"
                 :key="starter.label"
-                :label="starter.label"
-                :icon="starter.icon"
                 type="button"
-                color="neutral"
-                variant="outline"
-                class="min-h-10 rounded-full bg-default px-3.5"
+                class="chat-starter flex items-center gap-3 rounded-2xl border p-3 text-left sm:flex-col sm:items-start sm:gap-2 sm:p-4"
                 :disabled="dictating"
                 @click="chooseStarter(starter.prompt)"
-              />
+              >
+                <span class="eve-avatar size-8 shrink-0 rounded-lg">
+                  <UIcon :name="starter.icon" class="size-4" />
+                </span>
+                <span class="min-w-0 grow">
+                  <span class="block text-sm font-semibold text-highlighted">{{ starter.label }}</span>
+                  <span class="mt-0.5 block text-xs leading-snug text-muted">{{ starter.detail }}</span>
+                </span>
+                <UIcon name="i-lucide-arrow-up-right" class="size-4 shrink-0 text-muted sm:hidden" />
+              </button>
             </div>
-          </div>
+            <UButton
+              v-if="startOpen && messages.length"
+              type="button"
+              label="Back to conversation"
+              icon="i-lucide-messages-square"
+              variant="ghost"
+              color="neutral"
+              class="mt-3 rounded-xl sm:mt-4"
+              @click="startOpen = false"
+            />
+          </section>
+        </template>
+
+        <template #scroll-to-bottom-button="{ onClick }">
+          <button type="button" class="chat-latest pointer-events-auto inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium" @click="onClick">
+            <UIcon name="i-lucide-arrow-down" class="size-4" />
+            Jump to latest
+          </button>
         </template>
 
         <template #input>
-          <div class="space-y-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div class="space-y-2 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:pb-5">
             <div class="mx-auto w-full max-w-3xl space-y-2 px-4 sm:px-8">
               <AgentAuthorizationRequest
                 v-for="challenge in pendingChallenges"
@@ -550,9 +582,10 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
               <input ref="photosInput" type="file" :accept="PHOTO_ACCEPT" multiple class="hidden" @change="onPick">
               <input ref="cameraInput" type="file" accept="image/*" capture="environment" class="hidden" @change="onPick">
               <input ref="filesInput" type="file" :accept="FILE_ACCEPT" multiple class="hidden" @change="onPick">
-              <p v-if="attachmentError || actionError || chatError" role="alert" class="text-sm text-error">
-                {{ attachmentError || actionError?.message || chatError?.message }}
-              </p>
+              <div v-if="attachmentError || actionError || chatError" role="alert" class="pointer-events-auto flex items-start gap-2 rounded-xl border border-error/25 bg-default px-3 py-2 text-sm text-error">
+                <UIcon name="i-lucide-circle-alert" class="mt-0.5 size-4 shrink-0" />
+                <p>{{ attachmentError || actionError?.message || chatError?.message }}</p>
+              </div>
               <p v-if="preparingFiles" role="status" class="text-xs text-muted">Preparing attachments…</p>
             </div>
             <CopilotChatInput
@@ -562,6 +595,7 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
               :tools-menu="attachmentOptions"
               :auto-focus="false"
               :clear-on-submit="false"
+              :show-disclaimer="false"
               placeholder="Message Eve…"
               @update:model-value="input = $event.slice(0, MAX_CHAT_TEXT_LENGTH)"
               @submit-message="handleSubmit"
@@ -569,6 +603,21 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
               @keydown.enter.capture="sendAttachmentOnly"
               @paste="onPaste"
             >
+              <template #add-menu-button="{ disabled, menuOpen, toggleMenu }">
+                <UTooltip text="Add photos or files">
+                  <UButton
+                    type="button"
+                    icon="i-lucide-plus"
+                    aria-label="Add photos or files"
+                    :aria-expanded="menuOpen"
+                    :disabled="disabled"
+                    color="neutral"
+                    variant="ghost"
+                    class="chat-add size-10 justify-center rounded-full sm:size-11"
+                    @click="toggleMenu()"
+                  />
+                </UTooltip>
+              </template>
               <template #start-transcribe-button>
                 <div :class="dictating ? 'absolute inset-x-3 bottom-full mb-2 rounded-xl border border-default bg-default px-2 py-1 shadow-sm' : ''">
                   <ChatDictation
@@ -587,7 +636,7 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
                   icon="i-lucide-rotate-ccw"
                   variant="ghost"
                   color="neutral"
-                  class="size-10 justify-center rounded-full"
+                  class="size-10 justify-center rounded-full sm:size-11"
                   :loading="submitting"
                   @click="retryLast"
                 />
@@ -599,7 +648,7 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
                   :icon="isBusy ? 'i-lucide-square' : 'i-lucide-arrow-up'"
                   variant="solid"
                   color="neutral"
-                  class="size-10 justify-center rounded-full"
+                  class="chat-send size-10 justify-center rounded-full sm:size-11"
                   :disabled="!isBusy && !canSend"
                   @click="isBusy || input.trim() ? onClick() : handleSubmit()"
                 />
@@ -611,3 +660,166 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.eve-chat {
+  --eve-accent: #16665a;
+  --eve-tint: #e8f3ef;
+  --eve-paper: #f8faf9;
+  --eve-line: #dce7e3;
+  --eve-surface: #fff;
+  --eve-send: #185e53;
+  --eve-shadow: 0 6px 22px rgb(28 67 55 / 8%);
+  background: var(--eve-paper);
+}
+
+:global(.dark .eve-chat) {
+  --eve-accent: #a3dece;
+  --eve-tint: #213632;
+  --eve-paper: #141a18;
+  --eve-line: #334842;
+  --eve-surface: #1d2623;
+  --eve-send: #82ccb8;
+  --eve-shadow: 0 6px 22px rgb(0 0 0 / 26%);
+}
+
+.eve-avatar {
+  display: grid;
+  place-items: center;
+  background: var(--eve-tint);
+  color: var(--eve-accent);
+}
+
+.chat-welcome {
+  padding-top: clamp(1.4rem, 10dvh, 7rem);
+}
+
+.chat-starter,
+.chat-latest {
+  border-color: var(--eve-line);
+  background: var(--eve-surface);
+  transition: background-color 160ms, border-color 160ms;
+}
+
+.chat-starter:hover:not(:disabled),
+.chat-latest:hover {
+  border-color: var(--eve-accent);
+  background: var(--eve-tint);
+}
+
+.chat-starter:disabled {
+  opacity: 0.55;
+}
+
+.chat-starter:focus-visible,
+.chat-latest:focus-visible {
+  outline: 2px solid var(--eve-accent);
+  outline-offset: 3px;
+}
+
+.chat-latest {
+  color: var(--eve-accent);
+  box-shadow: var(--eve-shadow);
+}
+
+.eve-chat :deep(.chat-turn-user) {
+  padding-top: 0;
+}
+
+.chat-message {
+  color: var(--ui-text);
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+.chat-turn-user .chat-message {
+  width: fit-content;
+  max-width: 88%;
+  border: 1px solid var(--eve-line);
+  border-radius: 1.25rem 1.25rem 0.4rem 1.25rem;
+  background: var(--eve-tint);
+  padding: 0.55rem 0.9rem;
+}
+
+.chat-turn-assistant .chat-message {
+  border-radius: 0.75rem;
+  padding-inline: 0.25rem;
+}
+
+.is-search-match {
+  outline: 2px solid var(--eve-accent);
+  outline-offset: 4px;
+}
+
+.chat-actions {
+  margin-top: 0.2rem;
+  color: var(--ui-text-muted);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chat-actions {
+    opacity: 0.7;
+    transition: opacity 150ms;
+  }
+
+  .chat-turn:hover .chat-actions,
+  .chat-turn:focus-within .chat-actions {
+    opacity: 1;
+  }
+}
+
+@media (pointer: coarse) {
+  .chat-actions :deep(button) {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
+.eve-chat :deep([data-copilotkit]) {
+  --foreground: var(--ui-text);
+  --background: var(--eve-surface);
+  --muted: var(--eve-tint);
+  --muted-foreground: var(--ui-text-muted);
+  --border: var(--eve-line);
+  --ring: var(--eve-accent);
+}
+
+.eve-chat :deep([data-testid="copilot-chat-input-shell"]) {
+  border: 1px solid var(--eve-line);
+  border-radius: 1.5rem;
+  background: var(--eve-surface);
+  box-shadow: var(--eve-shadow);
+}
+
+.eve-chat :deep([data-testid="copilot-chat-input-shell"]:focus-within) {
+  border-color: var(--eve-accent);
+}
+
+.eve-chat :deep(textarea::placeholder) {
+  color: var(--ui-text-muted);
+}
+
+.chat-add {
+  background: var(--eve-tint);
+  color: var(--eve-accent);
+}
+
+.chat-send:not(:disabled) {
+  background: var(--eve-send);
+  color: white;
+}
+
+:global(.dark .eve-chat .chat-send:not(:disabled)) {
+  color: #132420;
+}
+
+.chat-send:hover:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+@media (max-height: 540px) {
+  .chat-welcome {
+    padding-top: 1rem;
+  }
+}
+</style>

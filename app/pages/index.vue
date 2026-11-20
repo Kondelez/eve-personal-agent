@@ -63,7 +63,7 @@ onMounted(() => void openChat());
       <AppNavbar>
         <template #title>
           <div class="flex items-center gap-3">
-            <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-800 text-white dark:bg-teal-300 dark:text-teal-950">
+            <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-800 ring-1 ring-teal-900/10 dark:bg-teal-950 dark:text-teal-200 dark:ring-teal-200/20">
               <AppLogo class="h-3.5 w-auto" />
             </span>
             <div class="min-w-0">
@@ -83,18 +83,20 @@ onMounted(() => void openChat());
             @click="startOpen ? startOpen = false : openStart()"
           />
         </UTooltip>
-        <UButton
-          v-if="chat && !error"
-          type="button"
-          variant="ghost"
-          color="neutral"
-          icon="i-lucide-search"
-          aria-label="Find in conversation"
-          title="Find in conversation"
-          :aria-expanded="searchOpen"
-          class="rounded-lg"
-          @click="openSearch"
-        />
+        <UTooltip v-if="chat && !error" text="Find in conversation" :kbds="['meta', 'K']">
+          <UButton
+            type="button"
+            :variant="searchOpen ? 'soft' : 'ghost'"
+            color="neutral"
+            icon="i-lucide-search"
+            aria-label="Find in conversation"
+            :aria-expanded="searchOpen"
+            class="rounded-lg"
+            @click="openSearch"
+          >
+            <span class="hidden sm:inline">Search</span>
+          </UButton>
+        </UTooltip>
         <UButton
           to="/settings/profile"
           variant="ghost"
