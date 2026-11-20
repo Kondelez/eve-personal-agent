@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import type { DropdownMenuItem } from "@nuxt/ui";
+import { CopilotChatAssistantMessage, CopilotChatInput, CopilotChatUserMessage, CopilotChatView } from "@copilotkit/vue/v2";
+import type { AssistantMessage, Attachment, ToolsMenuItem, UserMessage } from "@copilotkit/vue/v2";
+import "@copilotkit/vue/styles.css";
 import type { UIMessage } from "ai";
+import type { Component } from "vue";
 import { authClient } from "~/lib/auth-client";
 import type { AccountChat } from "#shared/types/account-chat";
 import { chatMediaId } from "#shared/chat-media";
@@ -32,7 +35,7 @@ const {
 const { pendingChallenges, failedChallenges, tryResumeConnectedChallenges } = useAuthorizationChallenges();
 
 const input = ref("");
-const composer = useTemplateRef("composer");
+const viewport = useTemplateRef("viewport");
 const photosInput = useTemplateRef("photosInput");
 const cameraInput = useTemplateRef("cameraInput");
 const filesInput = useTemplateRef("filesInput");
@@ -55,8 +58,24 @@ const greeting = computed(() => {
   return firstName ? `${time}, ${firstName}` : `${time}`;
 });
 const attachmentError = ref("");
+const composerDisabled = computed(() => preparingFiles.value || submitting.value || dictating.value || !!regenerating.value);
 const hasDraft = computed(() => Boolean(input.value.trim() || attachments.value.length));
-const canSend = computed(() => hasDraft.value && !isBusy.value && !preparingFiles.value && !submitting.value && !dictating.value);
+const canSend = computed(() => hasDraft.value && !isBusy.value && !composerDisabled.value);
+const visibleMessages = computed(() => startOpen.value ? [] : messages.value.map((message) => {
+  const role = message.role === "user" ? "user" : "assistant";
+  const renderer: Component = role === "user" ? CopilotChatUserMessage : CopilotChatAssistantMessage;
+  const preview: UserMessage | AssistantMessage = { id: message.id, role, content: textOf(message) };
+  return { original: message, renderer, preview };
+}));
+const copilotMessages = computed(() => visibleMessages.value.map(({ preview }) => preview));
+const copilotAttachments = computed<Attachment[]>(() => attachments.value.map(file => ({
+  id: file.id,
+  type: file.mediaType.startsWith("image/") ? "image" : "document",
+  source: { type: "data", value: file.data.slice(file.data.indexOf(",") + 1), mimeType: file.mediaType },
+  filename: file.filename,
+  size: file.size,
+  status: "ready",
+})));
 
 defineShortcuts({
   meta_u: {
@@ -66,10 +85,10 @@ defineShortcuts({
     },
   },
 });
-const attachmentOptions: DropdownMenuItem[] = [
-  { label: "Photos", icon: "i-lucide-images", onSelect: () => photosInput.value?.click() },
-  { label: "Take photo", icon: "i-lucide-camera", onSelect: () => cameraInput.value?.click() },
-  { label: "Files", icon: "i-lucide-file-up", onSelect: () => filesInput.value?.click() },
+const attachmentOptions: ToolsMenuItem[] = [
+  { label: "Photos", action: () => photosInput.value?.click() },
+  { label: "Take photo", action: () => cameraInput.value?.click() },
+  { label: "Files", action: () => filesInput.value?.click() },
 ];
 
 async function addFiles(files: readonly File[]) {
@@ -149,12 +168,16 @@ const starters = [
 
 function insertTranscript(text: string) {
   input.value = [input.value.trimEnd(), text].filter(Boolean).join(" ").slice(0, MAX_CHAT_TEXT_LENGTH);
-  void nextTick(() => composer.value?.textareaRef?.focus());
+  focusComposer();
 }
 
 function chooseStarter(prompt: string) {
   input.value = prompt;
-  composer.value?.textareaRef?.focus();
+  focusComposer();
+}
+
+function focusComposer() {
+  void nextTick(() => viewport.value?.querySelector("textarea")?.focus());
 }
 
 // Replay rebuilds pending sign-ins after mount; check each as it appears, in
@@ -167,6 +190,11 @@ watch(() => pendingChallenges.value.length, (count, previous) => {
 
 onMounted(() => {
   void tryResumeConnectedChallenges({ skipIfBusy: isBusy.value });
+  const textarea = viewport.value?.querySelector("textarea");
+  if (textarea) {
+    textarea.maxLength = MAX_CHAT_TEXT_LENGTH;
+    textarea.setAttribute("aria-label", "Message Eve");
+  }
 
   if (import.meta.client) {
     const onFocus = () => {
@@ -180,34 +208,23 @@ onMounted(() => {
 });
 
 const actionError = ref<Error>();
-const viewport = useTemplateRef("viewport");
-const atLatest = ref(true);
 const copied = ref("");
 const toast = useToast();
 
-function updateScroll() {
-  const element = viewport.value;
-  if (element) atLatest.value = element.scrollHeight - element.clientHeight - element.scrollTop < 100;
-}
-
 function jumpToLatest() {
-  const element = viewport.value;
-  if (element) element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  const element = viewport.value?.querySelector("[data-testid='copilot-chat-view-scroll']");
+  if (element) element.scrollTop = element.scrollHeight;
 }
-
-watch(messages, () => {
-  if (atLatest.value && !startOpen.value && viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight;
-}, { flush: "post" });
 
 watch(startOpen, (open) => {
-  if (!open && viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight;
+  if (!open) jumpToLatest();
 }, { flush: "post" });
 
 async function submitDraft(draft: ChatDraft) {
   startOpen.value = false;
-  atLatest.value = true;
   submitting.value = true;
   actionError.value = undefined;
+  jumpToLatest();
   try {
     if (await send(draft)) emit("sent");
   }
@@ -221,10 +238,10 @@ async function submitDraft(draft: ChatDraft) {
   }
 }
 
-function handleSubmit(event: Event) {
-  event.preventDefault();
-  if (!canSend.value || regenerating.value) return;
-  const draft = { text: input.value.trim(), attachments: attachments.value };
+function handleSubmit(value = input.value) {
+  const text = value.trim().slice(0, MAX_CHAT_TEXT_LENGTH);
+  if (isBusy.value || composerDisabled.value || (!text && !attachments.value.length)) return;
+  const draft = { text, attachments: attachments.value };
   input.value = "";
   attachments.value = [];
   attachmentError.value = "";
@@ -232,8 +249,9 @@ function handleSubmit(event: Event) {
 }
 
 function sendAttachmentOnly(event: KeyboardEvent) {
-  if (event.isComposing || event.shiftKey || input.value.trim() || !attachments.value.length) return;
-  handleSubmit(event);
+  if (!(event.target instanceof HTMLTextAreaElement) || event.isComposing || event.shiftKey || input.value.trim() || !attachments.value.length) return;
+  event.preventDefault();
+  handleSubmit();
 }
 
 async function retryLast() {
@@ -306,7 +324,7 @@ function canRegenerate(message: UIMessage) {
 async function regenerateReply(message: UIMessage) {
   if (regenerating.value || submitting.value || dictating.value || isBusy.value) return;
   regenerating.value = message.id;
-  atLatest.value = true;
+  jumpToLatest();
   try {
     await regenerate(message.id);
     jumpToLatest();
@@ -351,7 +369,6 @@ watch(searchOpen, async (open) => {
 });
 watch(activeMatch, (id) => {
   if (!id) return;
-  atLatest.value = false;
   viewport.value?.querySelector(`[data-message-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" });
 }, { flush: "post" });
 
@@ -367,7 +384,7 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
 
 <template>
   <div
-    class="relative flex min-h-0 flex-1 flex-col bg-[#f2f7f6] dark:bg-[#0e1718]"
+    class="relative flex min-h-0 flex-1 flex-col bg-default"
     @dragenter="onDragEnter"
     @dragleave="onDragLeave"
     @dragover="onDragOver"
@@ -402,246 +419,195 @@ function handleInputResponses(responses: Parameters<typeof respond>[0]) {
         <UButton type="button" icon="i-lucide-x" variant="ghost" color="neutral" aria-label="Close search" @click="searchOpen = false" />
       </form>
     </div>
-    <div ref="viewport" class="min-h-0 flex-1 overflow-y-auto overscroll-contain" @scroll.passive="updateScroll">
-      <div class="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6 sm:px-8 sm:py-10">
-        <UChatMessages
-          v-if="!startOpen && (messages.length || isBusy)"
-          :messages="messages"
-          :status="status"
-          :assistant="{
-            side: 'left',
-            variant: 'naked',
-            avatar: { text: 'E', alt: 'Eve' },
-            ui: {
-              leadingAvatar: 'bg-teal-100 text-teal-900 dark:bg-teal-900 dark:text-teal-100',
-              body: 'rounded-2xl rounded-tl-sm border border-default bg-default px-4 py-3 shadow-xs',
-            },
-          }"
-          :user="{
-            side: 'right',
-            variant: 'naked',
-            ui: { body: 'rounded-2xl rounded-tr-sm bg-teal-800 px-4 py-3 text-white dark:bg-teal-900' },
-          }"
-          class="min-w-0"
-        >
-          <template #indicator>
-            <ChatActivityIndicator />
-          </template>
-
-          <template #content="{ message }">
-            <div
-              :data-message-id="message.id"
-              class="min-w-0"
-              :class="activeMatch === message.id ? 'rounded-lg ring-2 ring-amber-500 ring-offset-4' : ''"
+    <div ref="viewport" class="min-h-0 flex-1">
+      <CopilotChatView
+        :messages="copilotMessages"
+        :is-running="isBusy"
+        :welcome-screen="false"
+        :attachments="copilotAttachments"
+        :on-remove-attachment="removeAttachment"
+        auto-scroll="pin-to-bottom"
+      >
+        <template #message-view>
+          <div v-if="!startOpen && (visibleMessages.length || isBusy)" class="space-y-2 px-1 pb-4 pt-2 sm:px-6">
+            <component
+              :is="renderer"
+              v-for="{ original: message, preview, renderer } in visibleMessages"
+              :key="message.id"
+              :message="preview"
             >
-              <p
-                v-if="isSms(message)"
-                class="mb-1 flex items-center gap-1 text-xs font-medium"
-                :class="message.role === 'user' ? 'text-teal-100' : 'text-muted'"
-              >
-                <UIcon name="i-lucide-smartphone" class="size-3.5" />
-                SMS
-              </p>
-              <ChatMessageContentEve
-                :message="message"
-                :status="status"
-                :is-last="message.id === messages.at(-1)?.id"
-                :can-respond="!isBusy"
-                @input-responses="handleInputResponses"
-              />
-              <div
-                v-if="textOf(message) && (message.id !== messages.at(-1)?.id || !isBusy)"
-                class="mt-1 flex flex-wrap items-center gap-0.5"
-                aria-label="Message actions"
-              >
-                <UTooltip :text="copied === message.id ? 'Copied' : 'Copy message'">
-                  <UButton
-                    type="button"
-                    variant="ghost"
-                    color="neutral"
-                    size="xs"
-                    :icon="copied === message.id ? 'i-lucide-check' : 'i-lucide-copy'"
-                    :aria-label="copied === message.id ? 'Copied' : 'Copy message'"
-                    :class="message.role === 'user' ? 'text-teal-100' : 'text-muted'"
-                    @click="copyMessage(message)"
+              <template #message-renderer>
+                <div
+                  class="min-w-0 text-base"
+                  :class="[
+                    preview.role === 'user' ? 'max-w-[86%] rounded-2xl bg-muted px-4 py-2.5 sm:max-w-[78%]' : 'py-2',
+                    activeMatch === message.id ? 'rounded-lg ring-2 ring-amber-500 ring-offset-4' : '',
+                  ]"
+                >
+                  <p
+                    v-if="isSms(message)"
+                    class="mb-1 flex items-center gap-1 text-xs font-medium text-muted"
+                  >
+                    <UIcon name="i-lucide-smartphone" class="size-3.5" />
+                    SMS
+                  </p>
+                  <ChatMessageContentEve
+                    :message="message"
+                    :status="status"
+                    :is-last="message.id === messages.at(-1)?.id"
+                    :can-respond="!isBusy"
+                    @input-responses="handleInputResponses"
                   />
-                </UTooltip>
-                <template v-if="message.role === 'assistant'">
-                  <UTooltip v-for="vote in ([1, -1] as const)" :key="vote" :text="vote === 1 ? 'Good reply' : 'Bad reply'">
-                    <UButton
-                      type="button"
-                      size="xs"
-                      :variant="votes[messageKey(message)] === vote ? 'soft' : 'ghost'"
-                      :color="votes[messageKey(message)] === vote ? (vote === 1 ? 'success' : 'error') : 'neutral'"
-                      :icon="vote === 1 ? 'i-lucide-thumbs-up' : 'i-lucide-thumbs-down'"
-                      :aria-label="vote === 1 ? 'Good reply' : 'Bad reply'"
-                      :aria-pressed="votes[messageKey(message)] === vote"
-                      :disabled="!!votesError || votePending.has(messageKey(message))"
-                      @click="voteFor(message, vote)"
-                    />
-                  </UTooltip>
-                  <UTooltip v-if="canRegenerate(message)" text="Regenerate as a new reply">
-                    <UButton
-                      type="button"
-                      variant="ghost"
-                      color="neutral"
-                      size="xs"
-                      icon="i-lucide-rotate-cw"
-                      aria-label="Regenerate reply"
-                      :loading="regenerating === message.id"
-                      :disabled="isBusy || !!regenerating || submitting || dictating"
-                      @click="regenerateReply(message)"
-                    />
-                  </UTooltip>
-                </template>
+                  <div
+                    v-if="textOf(message) && (message.id !== messages.at(-1)?.id || !isBusy)"
+                    class="mt-1 flex flex-wrap items-center gap-0.5"
+                    aria-label="Message actions"
+                  >
+                    <UTooltip :text="copied === message.id ? 'Copied' : 'Copy message'">
+                      <UButton
+                        type="button"
+                        variant="ghost"
+                        color="neutral"
+                        size="xs"
+                        :icon="copied === message.id ? 'i-lucide-check' : 'i-lucide-copy'"
+                        :aria-label="copied === message.id ? 'Copied' : 'Copy message'"
+                        class="text-muted"
+                        @click="copyMessage(message)"
+                      />
+                    </UTooltip>
+                    <template v-if="message.role === 'assistant'">
+                      <UTooltip v-for="vote in ([1, -1] as const)" :key="vote" :text="vote === 1 ? 'Good reply' : 'Bad reply'">
+                        <UButton
+                          type="button"
+                          size="xs"
+                          :variant="votes[messageKey(message)] === vote ? 'soft' : 'ghost'"
+                          :color="votes[messageKey(message)] === vote ? (vote === 1 ? 'success' : 'error') : 'neutral'"
+                          :icon="vote === 1 ? 'i-lucide-thumbs-up' : 'i-lucide-thumbs-down'"
+                          :aria-label="vote === 1 ? 'Good reply' : 'Bad reply'"
+                          :aria-pressed="votes[messageKey(message)] === vote"
+                          :disabled="!!votesError || votePending.has(messageKey(message))"
+                          @click="voteFor(message, vote)"
+                        />
+                      </UTooltip>
+                      <UTooltip v-if="canRegenerate(message)" text="Regenerate as a new reply">
+                        <UButton
+                          type="button"
+                          variant="ghost"
+                          color="neutral"
+                          size="xs"
+                          icon="i-lucide-rotate-cw"
+                          aria-label="Regenerate reply"
+                          :loading="regenerating === message.id"
+                          :disabled="isBusy || !!regenerating || submitting || dictating"
+                          @click="regenerateReply(message)"
+                        />
+                      </UTooltip>
+                    </template>
               </div>
             </div>
-          </template>
-        </UChatMessages>
-        <div v-else class="mx-auto my-auto w-full max-w-lg px-1 py-10 text-center sm:py-16">
-          <span class="mx-auto grid size-14 place-items-center rounded-2xl bg-teal-800 text-white shadow-sm dark:bg-teal-300 dark:text-teal-950">
-            <AppLogo class="h-5 w-auto" />
-          </span>
-          <h1 class="mt-5 text-3xl font-semibold tracking-tight text-highlighted sm:text-4xl">{{ greeting }}</h1>
-          <div class="mt-6 flex flex-wrap justify-center gap-2">
-            <UButton
-              v-for="starter in starters"
-              :key="starter.label"
-              :label="starter.label"
-              :icon="starter.icon"
-              type="button"
-              color="neutral"
-              variant="outline"
-              class="min-h-10 rounded-full bg-default px-3.5"
-              :disabled="dictating"
-              @click="chooseStarter(starter.prompt)"
-            />
+              </template>
+              <template #toolbar />
+              <template #tool-calls-view />
+            </component>
+            <ChatActivityIndicator v-if="isBusy && visibleMessages.at(-1)?.preview.role !== 'assistant'" class="pt-3" />
           </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="relative shrink-0 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 sm:px-8 sm:pb-5">
-      <UButton
-        v-if="!atLatest && !startOpen"
-        type="button"
-        color="neutral"
-        variant="outline"
-        icon="i-lucide-arrow-down"
-        aria-label="Jump to latest message"
-        class="absolute -top-12 left-1/2 -translate-x-1/2 rounded-full bg-default shadow-sm"
-        @click="jumpToLatest"
-      />
-
-      <div class="mx-auto w-full max-w-3xl space-y-2">
-        <AgentAuthorizationRequest
-          v-for="challenge in pendingChallenges"
-          :key="`pending-${challenge.name}`"
-          :challenge="challenge"
-        />
-        <AgentAuthorizationRequest
-          v-for="challenge in failedChallenges"
-          :key="`failed-${challenge.name}`"
-          :challenge="challenge"
-        />
-
-        <input ref="photosInput" type="file" :accept="PHOTO_ACCEPT" multiple class="hidden" @change="onPick">
-        <input ref="cameraInput" type="file" accept="image/*" capture="environment" class="hidden" @change="onPick">
-        <input ref="filesInput" type="file" :accept="FILE_ACCEPT" multiple class="hidden" @change="onPick">
-        <p v-if="attachmentError || actionError || chatError" role="alert" class="text-sm text-error">
-          {{ attachmentError || actionError?.message || chatError?.message }}
-        </p>
-        <UChatPrompt
-          ref="composer"
-          v-model="input"
-          :disabled="submitting || dictating"
-          :maxlength="MAX_CHAT_TEXT_LENGTH"
-          variant="outline"
-          placeholder="Message Eve…"
-          aria-label="Message Eve"
-          class="rounded-3xl bg-default p-2.5 shadow-md ring-1 ring-default focus-within:ring-teal-600 sm:p-3"
-          :ui="{ base: 'px-2.5 py-2 text-base' }"
-          @submit="handleSubmit"
-          @keydown.enter="sendAttachmentOnly"
-          @paste="onPaste"
-        >
-          <template v-if="attachments.length" #header>
-            <ul aria-label="Draft attachments" class="flex w-full flex-wrap gap-2 px-1">
-              <li v-for="file in attachments" :key="file.id" class="flex min-w-0 max-w-full items-center gap-2 rounded-xl border border-default bg-muted py-1 ps-1 pe-1.5">
-                <img
-                  v-if="file.mediaType.startsWith('image/')"
-                  :src="file.data"
-                  alt=""
-                  class="size-10 rounded-lg object-cover"
-                >
-                <span v-else class="grid size-10 shrink-0 place-items-center rounded-lg bg-elevated">
-                  <UIcon name="i-lucide-file-text" class="size-5 text-muted" />
-                </span>
-                <span :title="file.filename" class="max-w-32 truncate text-xs font-medium text-default sm:max-w-48">{{ file.filename }}</span>
-                <UButton
-                  type="button"
-                  icon="i-lucide-x"
-                  variant="ghost"
-                  color="neutral"
-                  size="xs"
-                  :aria-label="`Remove ${file.filename}`"
-                  @click="removeAttachment(file.id)"
-                />
-              </li>
-            </ul>
-          </template>
-          <template #footer>
-            <UDropdownMenu :items="attachmentOptions" :content="{ align: 'start', side: 'top', sideOffset: 8 }">
+          <div v-else class="mx-auto w-full max-w-lg px-1 pb-10 pt-[min(20vh,8rem)] text-center">
+            <span class="mx-auto grid size-12 place-items-center rounded-2xl bg-inverted text-inverted">
+              <AppLogo class="h-5 w-auto" />
+            </span>
+            <h1 class="mt-5 text-3xl font-semibold tracking-tight text-highlighted sm:text-4xl">{{ greeting }}</h1>
+            <div class="mt-6 flex flex-wrap justify-center gap-2">
               <UButton
+                v-for="starter in starters"
+                :key="starter.label"
+                :label="starter.label"
+                :icon="starter.icon"
                 type="button"
-                icon="i-lucide-plus"
                 color="neutral"
                 variant="outline"
-                aria-label="Add attachment"
-                title="Add attachment"
-                :disabled="preparingFiles || submitting || dictating"
-                class="size-10 justify-center rounded-full"
-              />
-            </UDropdownMenu>
-            <span v-if="preparingFiles" role="status" class="text-xs text-muted">Preparing attachments…</span>
-
-            <div
-              v-show="dictating || (!hasDraft && !isBusy && status !== 'error')"
-              class="ms-auto"
-              :class="{ 'min-w-0 flex-1': dictating }"
-            >
-              <ChatDictation
-                v-model:active="dictating"
-                :disabled="preparingFiles || submitting || !!regenerating"
-                @transcript="insertTranscript"
+                class="min-h-10 rounded-full bg-default px-3.5"
+                :disabled="dictating"
+                @click="chooseStarter(starter.prompt)"
               />
             </div>
+          </div>
+        </template>
 
-            <UChatPromptSubmit
-              v-if="!dictating && (isBusy || (status === 'error' && !hasDraft))"
-              class="ms-auto min-h-10 shrink-0 rounded-full px-4"
-              :status="status"
-              :label="isBusy ? 'Stop' : 'Retry'"
-              :aria-label="isBusy ? 'Stop reply' : 'Retry message'"
-              color="neutral"
+        <template #input>
+          <div class="space-y-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <div class="mx-auto w-full max-w-3xl space-y-2 px-4 sm:px-8">
+              <AgentAuthorizationRequest
+                v-for="challenge in pendingChallenges"
+                :key="`pending-${challenge.name}`"
+                :challenge="challenge"
+              />
+              <AgentAuthorizationRequest
+                v-for="challenge in failedChallenges"
+                :key="`failed-${challenge.name}`"
+                :challenge="challenge"
+              />
+
+              <input ref="photosInput" type="file" :accept="PHOTO_ACCEPT" multiple class="hidden" @change="onPick">
+              <input ref="cameraInput" type="file" accept="image/*" capture="environment" class="hidden" @change="onPick">
+              <input ref="filesInput" type="file" :accept="FILE_ACCEPT" multiple class="hidden" @change="onPick">
+              <p v-if="attachmentError || actionError || chatError" role="alert" class="text-sm text-error">
+                {{ attachmentError || actionError?.message || chatError?.message }}
+              </p>
+              <p v-if="preparingFiles" role="status" class="text-xs text-muted">Preparing attachments…</p>
+            </div>
+            <CopilotChatInput
+              :model-value="input"
+              :disabled="composerDisabled"
+              :is-running="isBusy"
+              :tools-menu="attachmentOptions"
+              :auto-focus="false"
+              :clear-on-submit="false"
+              placeholder="Message Eve…"
+              @update:model-value="input = $event.slice(0, MAX_CHAT_TEXT_LENGTH)"
+              @submit-message="handleSubmit"
               @stop="cancel()"
-              @reload="retryLast"
-            />
-            <UButton
-              v-else-if="!dictating && hasDraft"
-              :type="input.trim() ? 'submit' : 'button'"
-              label="Send"
-              icon="i-lucide-arrow-up"
-              aria-label="Send message"
-              color="neutral"
-              :loading="submitting"
-              :disabled="!canSend || !!regenerating"
-              class="ms-auto min-h-10 shrink-0 rounded-full bg-teal-800 px-4 text-white hover:bg-teal-700 dark:bg-teal-300 dark:text-teal-950 dark:hover:bg-teal-200"
-              @click="!input.trim() && handleSubmit($event)"
-            />
-          </template>
-        </UChatPrompt>
-      </div>
+              @keydown.enter.capture="sendAttachmentOnly"
+              @paste="onPaste"
+            >
+              <template #start-transcribe-button>
+                <div :class="dictating ? 'absolute inset-x-3 bottom-full mb-2 rounded-xl border border-default bg-default px-2 py-1 shadow-sm' : ''">
+                  <ChatDictation
+                    v-model:active="dictating"
+                    :disabled="preparingFiles || submitting || !!regenerating || isBusy"
+                    @transcript="insertTranscript"
+                  />
+                </div>
+              </template>
+              <template #send-button="{ onClick }">
+                <UButton
+                  v-if="!dictating && status === 'error' && !hasDraft && !isBusy"
+                  type="button"
+                  aria-label="Retry message"
+                  title="Retry message"
+                  icon="i-lucide-rotate-ccw"
+                  variant="ghost"
+                  color="neutral"
+                  class="size-10 justify-center rounded-full"
+                  :loading="submitting"
+                  @click="retryLast"
+                />
+                <UButton
+                  v-else-if="!dictating"
+                  type="button"
+                  :aria-label="isBusy ? 'Stop reply' : 'Send message'"
+                  :title="isBusy ? 'Stop reply' : 'Send message'"
+                  :icon="isBusy ? 'i-lucide-square' : 'i-lucide-arrow-up'"
+                  variant="solid"
+                  color="neutral"
+                  class="size-10 justify-center rounded-full"
+                  :disabled="!isBusy && !canSend"
+                  @click="isBusy || input.trim() ? onClick() : handleSubmit()"
+                />
+              </template>
+            </CopilotChatInput>
+          </div>
+        </template>
+      </CopilotChatView>
     </div>
   </div>
 </template>
